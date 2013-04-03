@@ -217,8 +217,9 @@ osg.objectInehrit = osg.objectInherit = function(base, extras) {
     function F() {}
     F.prototype = base;
     var obj = new F();
-    if(extras) {
-        osg.objectMix(obj, extras, false);
+    // let augment object with multiple arguement
+    for (var i = 1; i < arguments.length; i++) {
+        osg.objectMix(obj, arguments[i], false); 
     }
     return obj;
 };
