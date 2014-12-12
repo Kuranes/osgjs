@@ -43,8 +43,8 @@
         function createItems( deep ) {
             var scale = Math.pow( 2, deep - 1 );
 
-            var root = new osg.MatrixTransform();
-            root.setName( 'rootItems' );
+            var rootItems = new osg.MatrixTransform();
+            rootItems.setName( 'rootItems' );
             var nbx = NbItems;
             var nby = Math.floor( nbx * 9 / 16.0 );
             if ( deep === 0 ) {
@@ -78,11 +78,11 @@
                         mt.setMatrix( m2 );
                         mt.addChild( createItems( deep - 1 ) );
                     }
-                    root.addChild( mt );
+                    rootItems.addChild( mt );
                 }
             }
-            root.setName( 'model quads' );
-            return root;
+            rootItems.setName( 'model quads' );
+            return rootItems;
         }
 
 
@@ -90,9 +90,14 @@
             var root = createItems( Deep );
             var ss = root.getOrCreateStateSet();
             var material = new osg.Material();
-            material.setDiffuse( [ 0, 1, 1, 1 ] );
-            material.setAmbient( [ 0, 0, 1, 1 ] );
+            material.setDiffuse( [ 1, 1, 1, 1 ] );
+            material.setAmbient( [ 1, 1, 1, 1 ] );
             ss.setAttributeAndMode( material );
+
+            var groundTex = osg.Texture.createFromURL( '../media/textures/seamless/bricks1.jpg' );
+            groundTex.setWrapT( 'MIRRORED_REPEAT' );
+            groundTex.setWrapS( 'MIRRORED_REPEAT' );
+            ss.setTextureAttributeAndMode( 0, groundTex );
             return root;
         }
         var newScene = createAliasedScene();
@@ -100,6 +105,19 @@
     };
 
     var currentTime = 0;
+    var currentFrameSinceStop = 0;
+    var currentEffectName;
+
+    var root;
+    var commonNode2, sceneTexture2, cameraRTT2;
+    var commonNode, sceneTexture, cameraRTT;
+    var currentCameraComposerEffect;
+    //var factorRender;
+
+    var sampleXUnif;
+    var sampleYUnif;
+    var frameNumUnif;
+    var factorRenderUnif;
 
     function addModel() {
 
@@ -139,15 +157,21 @@
         camera.setComputeNearFar( false );
 
         // attach a texture to the camera to render the scene on
-        var sceneTexture = new osg.Texture();
-        sceneTexture.setTextureSize( rttSize[ 0 ], rttSize[ 1 ] );
-        sceneTexture.setMinFilter( 'LINEAR' );
-        sceneTexture.setMagFilter( 'LINEAR' );
+        var newSceneTexture = new osg.Texture();
+        newSceneTexture.setTextureSize( rttSize[ 0 ], rttSize[ 1 ] );
+
+        //newSceneTexture.setMinFilter( 'LINEAR' );
+        //newSceneTexture.setMagFilter( 'LINEAR' );
+
+        newSceneTexture.setMinFilter( 'NEAREST' );
+        newSceneTexture.setMagFilter( 'NEAREST' );
+
+
         if ( doFloat ) {
-            sceneTexture.setType( osg.Texture.FLOAT );
-            sceneTexture.setInternalFormat( osg.Texture.RGBA );
+            newSceneTexture.setType( osg.Texture.FLOAT );
+            newSceneTexture.setInternalFormat( osg.Texture.RGBA );
         }
-        camera.attachTexture( osg.FrameBufferObject.COLOR_ATTACHMENT0, sceneTexture, 0 );
+        camera.attachTexture( osg.FrameBufferObject.COLOR_ATTACHMENT0, newSceneTexture, 0 );
         camera.attachRenderBuffer( osg.FrameBufferObject.DEPTH_ATTACHMENT, osg.FrameBufferObject.DEPTH_COMPONENT16 );
         // add the scene to the camera
         camera.addChild( rootModel );
@@ -157,11 +181,24 @@
         osg.Matrix.copy( [ -1, 0, -0, 0, 0, 1, -0, 0, 0, -0, -1, 0, 0, 0, -10, 1 ], camera.getViewMatrix() );
 
         // attach camera to root
-        var root = new osg.MatrixTransform();
-        root.setName( 'CameraRTTFather' );
-        root.addChild( camera );
+        var newRoot = new osg.MatrixTransform();
+        newRoot.setName( 'CameraRTTFather' );
+        newRoot.addChild( camera );
 
-        return [ root, sceneTexture, camera, rootModel ];
+        return [ newRoot, newSceneTexture, camera, rootModel ];
+    }
+
+    //http://www.ben-peck.com/articles/halton/
+    function halton( index, base ) {
+        var result = 0.0;
+        var f = 1.0 / base;
+        var i = index;
+        while ( i > 0 ) {
+            result = result + f * ( i % base );
+            i = Math.floor( i / base );
+            f = f / base;
+        }
+        return result;
     }
 
     function readShaders() {
@@ -177,7 +214,9 @@
             'reconstVert',
             'reconstFrag',
             'temporalAAVert',
-            'temporalAAFrag'
+            'temporalAAFrag',
+            'temporalStaticAAVert',
+            'temporalStaticAAFrag'
         ];
 
         var promises = [];
@@ -317,10 +356,12 @@
 
     function createScene( width, height, gui ) {
 
-        var sampleXTime;
-        var sampleYTime;
-        var sampleX = osg.Uniform.createFloat1( 0.0, 'SampleX' );
-        var sampleY = osg.Uniform.createFloat1( 0.0, 'SampleY' );
+        sampleXUnif = osg.Uniform.createFloat1( 0.0, 'SampleX' );
+        sampleYUnif = osg.Uniform.createFloat1( 0.0, 'SampleY' );
+        frameNumUnif = osg.Uniform.createFloat1( 0.0, 'FrameNum' );
+        factorRenderUnif = osg.Uniform.createFloat1( 1.0, 'FactorRender' );
+
+
 
         var rttSize = [ width, height ];
         // cannot add same model multiple in same grap
@@ -332,33 +373,24 @@
         groundTex.setWrapT( 'MIRRORED_REPEAT' );
         groundTex.setWrapS( 'MIRRORED_REPEAT' );
 
-        model.getOrCreateStateSet().setTextureAttributeAndMode( 2, groundTex, osg.StateAttribute.OVERRIDE );
-        model.getOrCreateStateSet().addUniform( osg.Uniform.createInt1( 2, 'Texture2' ) );
-
 
 
         //   var model2 = addModel(  ); // "previous frame model", making it different
         //////////////////////////////
         // store depth for next frame
         var result2 = commonScene( rttSize, osg.Camera.POST_RENDER, model, false );
-        var commonNode2 = result2[ 0 ];
-        var sceneTexture2 = result2[ 1 ];
-        var cameraRTT2 = result2[ 2 ];
-
-        //////////////////////////////////////////////
-        // write depth into texture using that depth shader.
-        var st = cameraRTT2.getOrCreateStateSet();
-        var prg = getShaderProgram( 'depthVert', 'depthFrag' );
-        st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
+        commonNode2 = result2[ 0 ];
+        sceneTexture2 = result2[ 1 ];
+        cameraRTT2 = result2[ 2 ];
 
         //////////////////////////////////////////////
         // render current Scene using last depth as texture for all input
         var result = commonScene( rttSize, osg.Camera.PRE_RENDER, model );
-        var commonNode = result[ 0 ];
-        var sceneTexture = result[ 1 ];
-        var cameraRTT = result[ 2 ];
+        commonNode = result[ 0 ];
+        sceneTexture = result[ 1 ];
+        cameraRTT = result[ 2 ];
 
-        var root = new osg.Node();
+        root = new osg.Node();
         root.setName( 'rootcreateScene' );
 
         var texW = osg.Uniform.createFloat1( rttSize[ 0 ], 'tex_w' );
@@ -389,7 +421,8 @@
         var postScenes = [
             getTemporalAA(),
             getTemporalReproject(),
-            getFxaa()
+            getFxaa(),
+            getTemporalStaticAA()
         ];
 
         var effects = [];
@@ -401,25 +434,16 @@
             'factor': 1.0,
             'animate': function () {
                 doAnimate = !doAnimate;
+                currentFrameSinceStop = 0;
             },
             'reload': function () {
                 readShaders().then( function () {
                     if ( console.clear ) console.clear();
-                    var st = cameraRTT2.getOrCreateStateSet();
-                    var prg = getShaderProgram( 'depthVert', 'depthFrag' );
-                    st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
-
-
-                    var groundTex = osg.Texture.createFromURL( '../media/textures/seamless/bricks1.jpg' );
-                    groundTex.setWrapT( 'MIRRORED_REPEAT' );
-                    groundTex.setWrapS( 'MIRRORED_REPEAT' );
-                    st.setTextureAttributeAndMode( 2, groundTex, osg.StateAttribute.OVERRIDE );
-
-                    st.addUniform( osg.Uniform.createInt1( 2, 'Texture2' ) );
-
                     setComposer( globalGui.filter, parseFloat( globalGui.factor ) );
 
+                    currentFrameSinceStop = 0;
                 } );
+
             }
         };
 
@@ -428,6 +452,7 @@
                 setComposer( value, parseFloat( globalGui.factor ) );
             } );
             gui.add( globalGui, 'factor', 0.125, 3.0 ).onChange( function ( value ) {
+                factorRenderUnif.set( value );
                 setComposer( globalGui.filter, parseFloat( value ) );
             } );
 
@@ -436,13 +461,76 @@
             gui.add( globalGui, 'reload' );
         }
 
+        var prg, st;
         if ( postScenes[ 0 ].getSceneProgram ) {
             cameraRTT = result[ 2 ];
             st = cameraRTT.getOrCreateStateSet();
-            prg = postScenes[ 0 ].getSceneProgram();
-            st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
-            st.setTextureAttributeAndMode( 0, sceneTexture2, osg.StateAttribute.ON | osg.StateAttribute.OVERRIDE );
+            currentCameraComposerEffect = cameraRTT;
+
+            if ( postScenes[ 0 ].name.indexOf( 'Static' ) !== -1 ) {
+
+                st.setTextureAttributeAndMode( 0, groundTex, osg.StateAttribute.OVERRIDE );
+                st.addUniform( osg.Uniform.createInt1( 0, 'Texture0' ) );
+
+                prg = postScenes[ 0 ].getSceneProgram();
+
+                st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
+                st.setTextureAttributeAndMode( 2, sceneTexture2, osg.StateAttribute.ON | osg.StateAttribute.OVERRIDE );
+                st.addUniform( osg.Uniform.createInt1( 2, 'Texture2' ) );
+                st.addUniform( sampleXUnif );
+                st.addUniform( sampleYUnif );
+                st.addUniform( frameNumUnif );
+                st.addUniform( factorRenderUnif );
+
+                st = cameraRTT2.getOrCreateStateSet();
+
+                st.setTextureAttributeAndMode( 0, groundTex, osg.StateAttribute.OVERRIDE );
+                st.addUniform( osg.Uniform.createInt1( 0, 'Texture0' ) );
+
+                prg = postScenes[ 0 ].getSceneProgram();
+
+                st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
+                st.setTextureAttributeAndMode( 2, sceneTexture, osg.StateAttribute.ON | osg.StateAttribute.OVERRIDE );
+                st.addUniform( osg.Uniform.createInt1( 2, 'Texture2' ) );
+                st.addUniform( sampleXUnif );
+                st.addUniform( sampleYUnif );
+                st.addUniform( frameNumUnif );
+                st.addUniform( factorRenderUnif );
+
+            } else {
+                st = cameraRTT.getOrCreateStateSet();
+                st.setTextureAttributeAndMode( 2, sceneTexture2, osg.StateAttribute.ON | osg.StateAttribute.OVERRIDE );
+                //////////////////////////////////////////////
+                // write depth into texture using that depth shader.
+                st = cameraRTT2.getOrCreateStateSet();
+                prg = getShaderProgram( 'depthVert', 'depthFrag' );
+                st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
+
+                //var st = modelRTT.getOrCreateStateSet();
+                prg = postScenes[ 0 ].getSceneProgram();
+                st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
+                st.setTextureAttributeAndMode( 0, groundTex, osg.StateAttribute.ON | osg.StateAttribute.OVERRIDE );
+                st.addUniform( osg.Uniform.createInt1( 1, 'Texture0' ) );
+                st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
+                st.setTextureAttributeAndMode( 2, sceneTexture, osg.StateAttribute.ON | osg.StateAttribute.OVERRIDE );
+                st.addUniform( osg.Uniform.createInt1( 2, 'Texture2' ) );
+            }
+        } else {
+            st = cameraRTT.getOrCreateStateSet();
+            st.setTextureAttributeAndMode( 0, groundTex, osg.StateAttribute.OVERRIDE );
             st.addUniform( osg.Uniform.createInt1( 0, 'Texture0' ) );
+            st.setTextureAttributeAndMode( 2, sceneTexture2, osg.StateAttribute.ON | osg.StateAttribute.OVERRIDE );
+
+            prg = getShaderProgram( 'baseVert', 'baseFrag', [], true );
+            st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
+
+            st = cameraRTT2.getOrCreateStateSet();
+
+            prg = getShaderProgram( 'baseVert', 'baseFrag', [], true );
+            st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
+
+            st.setTextureAttributeAndMode( 2, sceneTexture, osg.StateAttribute.ON | osg.StateAttribute.OVERRIDE );
+
         }
 
         var currentComposer = postScenes[ 0 ].buildComposer( sceneTexture, finalTexture, quad, scene );
@@ -451,12 +539,17 @@
 
         var cachedComposers = [];
         cachedComposers[ postScenes[ 0 ].name ] = currentComposer;
+        currentEffectName = postScenes[ 0 ].name;
 
         function setComposer( effectName, textureScale ) {
+
+            currentEffectName = effectName;
 
             // recreate the rtt
             //
             root.removeChild( commonNode );
+            root.removeChild( commonNode2 );
+
             //if ( rttSize[ 0 ] !== width * textureScale || rttSize[ 1 ] !== height * textureScale ) {
 
             rttSize = [ width * textureScale, height * textureScale ];
@@ -469,22 +562,83 @@
             if ( effects[ effectName ].getSceneProgram ) {
                 cameraRTT = result[ 2 ];
 
-                var st = cameraRTT.getOrCreateStateSet();
-                //var st = modelRTT.getOrCreateStateSet();
-                var prg = effects[ effectName ].getSceneProgram();
-                st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
-                st.setTextureAttributeAndMode( 0, sceneTexture2, osg.StateAttribute.ON | osg.StateAttribute.OVERRIDE );
+                st = cameraRTT.getOrCreateStateSet();
+                currentCameraComposerEffect = cameraRTT;
+
+                if ( effectName.indexOf( 'Static' ) !== -1 ) {
+
+                    st.setTextureAttributeAndMode( 0, groundTex, osg.StateAttribute.OVERRIDE );
+                    st.addUniform( osg.Uniform.createInt1( 0, 'Texture0' ) );
+
+                    prg = effects[ effectName ].getSceneProgram();
+                    st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
+                    st.setTextureAttributeAndMode( 2, sceneTexture2, osg.StateAttribute.ON | osg.StateAttribute.OVERRIDE );
+                    st.addUniform( osg.Uniform.createInt1( 2, 'Texture2' ) );
+                    st.addUniform( sampleXUnif );
+                    st.addUniform( sampleYUnif );
+                    st.addUniform( frameNumUnif );
+                    st.addUniform( factorRenderUnif );
+
+                    st = cameraRTT2.getOrCreateStateSet();
+                    st.setTextureAttributeAndMode( 0, groundTex, osg.StateAttribute.OVERRIDE );
+                    st.addUniform( osg.Uniform.createInt1( 0, 'Texture0' ) );
+
+                    prg = effects[ effectName ].getSceneProgram();
+                    st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
+
+                    st.setTextureAttributeAndMode( 2, sceneTexture, osg.StateAttribute.ON | osg.StateAttribute.OVERRIDE );
+                    st.addUniform( osg.Uniform.createInt1( 2, 'Texture2' ) );
+                    st.addUniform( sampleXUnif );
+                    st.addUniform( sampleYUnif );
+                    st.addUniform( frameNumUnif );
+                    st.addUniform( factorRenderUnif );
+
+                } else {
+                    st = cameraRTT.getOrCreateStateSet();
+                    st.setTextureAttributeAndMode( 2, sceneTexture2, osg.StateAttribute.ON | osg.StateAttribute.OVERRIDE );
+                    //////////////////////////////////////////////
+                    // write depth into texture using that depth shader.
+                    st = cameraRTT2.getOrCreateStateSet();
+                    prg = getShaderProgram( 'depthVert', 'depthFrag' );
+                    st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
+
+                    //var st = modelRTT.getOrCreateStateSet();
+                    prg = effects[ effectName ].getSceneProgram();
+                    st.setTextureAttributeAndMode( 0, groundTex, osg.StateAttribute.OVERRIDE );
+                    st.addUniform( osg.Uniform.createInt1( 0, 'Texture0' ) );
+
+                    st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
+                    st.setTextureAttributeAndMode( 2, sceneTexture, osg.StateAttribute.ON | osg.StateAttribute.OVERRIDE );
+                    st.addUniform( osg.Uniform.createInt1( 2, 'Texture2' ) );
+
+                }
+            } else {
+                st = cameraRTT.getOrCreateStateSet();
+                st.setTextureAttributeAndMode( 0, groundTex, osg.StateAttribute.OVERRIDE );
                 st.addUniform( osg.Uniform.createInt1( 0, 'Texture0' ) );
 
+                prg = getShaderProgram( 'baseVert', 'baseFrag', [], true );
+                st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
+
+                st.setTextureAttributeAndMode( 2, sceneTexture2, osg.StateAttribute.ON | osg.StateAttribute.OVERRIDE );
+                st = cameraRTT2.getOrCreateStateSet();
+                st.setTextureAttributeAndMode( 2, sceneTexture, osg.StateAttribute.ON | osg.StateAttribute.OVERRIDE );
+
+                prg = getShaderProgram( 'baseVert', 'baseFrag', [], true );
+                st.setAttributeAndMode( prg, osg.StateAttribute.ON || osg.StateAttribute.OVERRIDE );
             }
+
+
 
             // new final Texture
             finalTexture = new osg.Texture();
             finalTexture.setTextureSize( rttSize[ 0 ], rttSize[ 1 ] );
             texW.set( rttSize[ 0 ] );
             texH.set( rttSize[ 1 ] );
+
             finalTexture.setMinFilter( osg.Texture.LINEAR );
             finalTexture.setMagFilter( osg.Texture.LINEAR );
+
             quad.getOrCreateStateSet().setTextureAttributeAndMode( 0, finalTexture );
             //}
 
@@ -507,14 +661,22 @@
             currentComposer = cachedComposers[ effectName ];
             scene.addChild( currentComposer );
 
-            if ( effects[ effectName ].needCommonCube ) {
+            if ( effectName.indexOf( 'static' ) !== -1 ) {
+                if ( effects[ effectName ].needPreviousDepth ) {
+                    root.addChild( commonNode2 );
+                }
+                if ( effects[ effectName ].needCommonCube ) {
+                    root.addChild( commonNode );
+                }
+            } else {
+                currentFrameSinceStop = 0;
                 root.addChild( commonNode );
             }
-
             _rtt = [];
             _rtt.push( sceneTexture2 );
             _rtt.push( sceneTexture );
             _rtt.push( finalTexture );
+
             updateDebugRtt();
 
         }
@@ -535,6 +697,7 @@
         root.addChild( commonNode );
         root.addChild( commonNode2 );
 
+
         // update once a frame
         var UpdateCallback = function () {
             this.update = function ( node, nv ) {
@@ -542,11 +705,41 @@
                     currentTime = nv.getFrameStamp().getSimulationTime();
                     var x = Math.cos( currentTime );
                     osg.Matrix.makeRotate( x, 0, 0, 1, model.getMatrix() );
+
+                }
+                if ( currentEffectName.indexOf( 'Static' ) !== -1 ) {
+                    currentFrameSinceStop++;
+                    var frameNum = currentFrameSinceStop;
+
+                    if ( frameNum >= 100 ) {
+                        sampleXUnif.set( halton( frameNum - 100, 2 ) );
+                        sampleYUnif.set( halton( frameNum - 100, 3 ) );
+                    }
+                    frameNumUnif.set( frameNum );
+                    //                    factorRenderUnif.set( factorRender );
+
+                    // should be composer node switching,
+                    // but it's a mess.
+                    //var sceneTexture, sceneTexture2;
+
+                    //currentCameraComposerEffect;
+                    if ( currentFrameSinceStop % 2 === 0 ) {
+
+                        if ( root.hasChild( commonNode ) ) root.removeChild( commonNode );
+                        if ( !root.hasChild( commonNode2 ) ) root.addChild( commonNode2 );
+                    } else {
+
+                        if ( root.hasChild( commonNode2 ) ) root.removeChild( commonNode2 );
+                        if ( !root.hasChild( commonNode ) ) root.addChild( commonNode );
+
+                    }
                 }
 
                 // making sure here.
                 osg.Matrix.copy( cameraRTT.getProjectionMatrix(), cameraRTT2.getProjectionMatrix() );
                 osg.Matrix.copy( cameraRTT.getViewMatrix(), cameraRTT2.getViewMatrix() );
+                osg.Matrix.copy( cameraRTT2.getProjectionMatrix(), cameraRTT2.getProjectionMatrix() );
+                osg.Matrix.copy( cameraRTT2.getViewMatrix(), cameraRTT2.getViewMatrix() );
 
                 node.traverse( nv );
             };
