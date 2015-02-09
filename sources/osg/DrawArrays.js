@@ -3,6 +3,8 @@ define( [
     'osg/PrimitiveSet'
 ], function ( Notify, PrimitiveSet ) {
 
+    'use strict';
+
     /**
      * DrawArrays manage rendering primitives
      * @class DrawArrays
@@ -22,6 +24,8 @@ define( [
     /** @lends DrawArrays.prototype */
     DrawArrays.prototype = {
         draw: function ( state ) {
+            if ( this.count === 0 )
+                return;
             var gl = state.getGraphicContext();
             gl.drawArrays( this.mode, this.first, this.count );
         },
@@ -33,7 +37,14 @@ define( [
         },
         getFirst: function () {
             return this.first;
+        },
+        getNumIndices: function () {
+            return this.count;
+        },
+        index: function ( i ) {
+            return this.first + i;
         }
+
     };
     DrawArrays.create = function ( mode, first, count ) {
         Notify.log( 'DrawArrays.create is deprecated, use new DrawArrays with same arguments' );

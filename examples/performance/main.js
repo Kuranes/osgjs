@@ -45,7 +45,7 @@ function getOrCreateItem() {
         var rq = osg.createTexturedQuadGeometry( -QuadSizeX / 2.0, -QuadSizeY / 2.0, 0,
             QuadSizeX, 0, 0,
             0, QuadSizeY, 0 );
-        rq.getOrCreateStateSet().setTextureAttributeAndMode( 0, Texture );
+        rq.getOrCreateStateSet().setTextureAttributeAndModes( 0, Texture );
         Item = rq;
     }
     return Item;
@@ -109,18 +109,13 @@ function main() {
 
     var canvas = document.getElementById( 'View' );
 
-    var viewer;
-    try {
-        viewer = new osgViewer.Viewer( canvas );
-        viewer.init();
-        viewer.setSceneData( createScene() );
-        viewer.setupManipulator();
-        viewer.getManipulator().computeHomePosition();
-        viewer.run();
-    } catch ( er ) {
-        osg.log( 'exception in osgViewer ' + er );
-    }
+    var viewer = new osgViewer.Viewer( canvas );
+    viewer.init();
+    viewer.setSceneData( createScene() );
+    viewer.setupManipulator();
+    viewer.getManipulator().computeHomePosition();
+    viewer.run();
 
 }
 
-addEventListener( 'load', main, true );
+window.addEventListener( 'load', main, true );

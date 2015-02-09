@@ -1,19 +1,25 @@
 define( [
-    'osg/Utils',
-    'osg/StateAttribute',
+    'osg/Map',
+    'osg/Notify',
     'osg/Object',
-    'osg/Map'
-], function ( MACROUTILS, StateAttribute, Object, Map ) {
+    'osg/StateAttribute',
+    'osg/Utils',
+
+], function ( Map, Notify, Object, StateAttribute, MACROUTILS ) {
 
     'use strict';
 
-    /**
-     * StateSet encapsulate StateAttribute
-     * @class StateSet
+    /** Stores a set of modes and attributes which represent a set of OpenGL state.
+     *  Notice that a \c StateSet contains just a subset of the whole OpenGL state.
+     * <p>In OSG, each \c Drawable and each \c Node has a reference to a
+     * \c StateSet. These <tt>StateSet</tt>s can be shared between
+     * different <tt>Drawable</tt>s and <tt>Node</tt>s (that is, several
+     * <tt>Drawable</tt>s and <tt>Node</tt>s can reference the same \c StateSet).
+     * Indeed, this practice is recommended whenever possible,
+     * as this minimizes expensive state changes in the graphics pipeline.
      */
     var StateSet = function () {
         Object.call( this );
-        this.id = StateSet.instance++;
 
         this.attributeMap = new Map();
 
@@ -22,18 +28,18 @@ define( [
         this._binName = undefined;
         this._binNumber = 0;
 
-        this._shaderGenerator = undefined;
+        this._shaderGeneratorName = undefined;
         this._updateCallbackList = [];
 
         this.uniforms = new Map();
 
     };
-    StateSet.instance = 0;
 
     StateSet.AttributePair = function ( attr, value ) {
         this._object = attr;
         this._value = value;
     };
+
     StateSet.AttributePair.prototype = {
         getAttribute: function () {
             return this._object;
@@ -46,8 +52,8 @@ define( [
         }
     };
 
-    /** @lends StateSet.prototype */
-    StateSet.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInehrit( Object.prototype, {
+
+    StateSet.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInherit( Object.prototype, {
         getAttributePair: function ( attribute, value ) {
             return new StateSet.AttributePair( attribute, value );
         },
@@ -60,6 +66,12 @@ define( [
             this.uniforms[ name ] = this.getAttributePair( uniform, mode );
             this.uniforms.dirty();
         },
+        removeUniform: function ( uniform ) {
+            this.uniforms.remove( uniform.getName() );
+        },
+        removeUniformByName: function ( uniformName ) {
+            this.uniforms.remove( uniformName );
+        },
         getUniform: function ( uniform ) {
             var uniformMap = this.uniforms;
             if ( uniformMap[ uniform ] ) return uniformMap[ uniform ].getAttribute();
@@ -70,12 +82,17 @@ define( [
             return this.uniforms;
         },
 
-        setTextureAttributeAndMode: function ( unit, attribute, mode ) {
+        setTextureAttributeAndModes: function ( unit, attribute, mode ) {
             if ( mode === undefined ) {
                 mode = StateAttribute.ON;
             }
             this._setTextureAttribute( unit, this.getAttributePair( attribute, mode ) );
         },
+        setTextureAttributeAndMode: function ( unit, attribute, mode ) {
+            Notify.log( 'StateSet.setTextureAttributeAndMode is deprecated, insteady use setTextureAttributeAndModes' );
+            this.setTextureAttributeAndModes( unit, attribute, mode );
+        },
+
         getNumTextureAttributeLists: function () {
             return this.textureAttributeMapList.length;
         },
@@ -95,7 +112,7 @@ define( [
             if ( textureAttributeMap[ attributeName ] === undefined ) return;
 
 
-            delete textureAttributeMap[ attributeName ];
+            textureAttributeMap.remove( attributeName );
             this.textureAttributeMapList[ unit ].dirty();
         },
 
@@ -106,12 +123,18 @@ define( [
             return this.attributeMap[ attributeType ].getAttribute();
         },
 
-        setAttributeAndMode: function ( attribute, mode ) {
+        setAttributeAndModes: function ( attribute, mode ) {
             if ( mode === undefined ) {
                 mode = StateAttribute.ON;
             }
             this._setAttribute( this.getAttributePair( attribute, mode ) );
         },
+
+        setAttributeAndMode: function ( attribute, mode ) {
+            Notify.log( 'StateSet.setAttributeAndMode is deprecated, insteady use setAttributeAndModes' );
+            this.setAttributeAndModes( attribute, mode );
+        },
+
         setAttribute: function ( attribute, mode ) {
             if ( mode === undefined ) {
                 mode = StateAttribute.ON;
@@ -183,11 +206,17 @@ define( [
             }
             return list;
         },
-        setShaderGenerator: function ( generator ) {
-            this._shaderGenerator = generator;
+        setShaderGeneratorName: function ( generatorName ) {
+            this._shaderGeneratorName = generatorName;
         },
-        getShaderGenerator: function () {
-            return this._shaderGenerator;
+        getShaderGeneratorName: function () {
+            return this._shaderGeneratorName;
+        },
+        releaseGLObjects: function ( state ) {
+            // TODO: We should release Program/Shader attributes too
+            for ( var i = 0, j = this.textureAttributeMapList.length; i < j; i++ ) {
+                this.getTextureAttribute( i, 'Texture' ).releaseGLObjects( state );
+            }
         },
         _getUniformMap: function () {
             return this.uniforms;
@@ -218,8 +247,6 @@ define( [
         }
 
     } ), 'osg', 'StateSet' );
-    StateSet.prototype.setTextureAttributeAndModes = StateSet.prototype.setTextureAttributeAndMode;
-    StateSet.prototype.setAttributeAndModes = StateSet.prototype.setAttributeAndMode;
 
     return StateSet;
 } );

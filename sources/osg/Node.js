@@ -34,7 +34,7 @@ define( [
     };
 
     /** @lends Node.prototype */
-    Node.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInehrit( Object.prototype, {
+    Node.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInherit( Object.prototype, {
         /**
         Return StateSet and create it if it does not exist yet
         @type StateSet
@@ -227,29 +227,39 @@ define( [
             return this.boundingSphere;
         },
 
-        computeBound: function ( bsphere ) {
+        // TODO: PERF: Heavy GC impact
+        // find why making a closure var for bb breaks (v8&&ffx)
+        // frustum culling sample
+        //var  bbTemp = new BoundingBox();
+        //return function(){
+        //var bb = bbTemp;
+        //bb.init();
+        //...
+        //};}(),
+        computeBound: function ( bSphere ) {
             var bb = new BoundingBox();
-            bb.init();
-            bsphere.init();
-            for ( var i = 0, l = this.children.length; i < l; i++ ) {
-                var child = this.children[ i ];
-                if ( child.referenceFrame === undefined || child.referenceFrame === TransformEnums.RELATIVE_RF ) {
-                    bb.expandBySphere( child.getBound() );
+            var cc, i, l = this.children.length;
+            for ( i = 0; i < l; i++ ) {
+                cc = this.children[ i ];
+                if ( cc.referenceFrame === undefined || cc.referenceFrame === TransformEnums.RELATIVE_RF ) {
+                    bb.expandByBoundingSphere( cc.getBound() );
                 }
             }
             if ( !bb.valid() ) {
-                return bsphere;
+                bSphere.init();
+                return bSphere;
             }
-            bsphere._center = bb.center();
-            bsphere._radius = 0.0;
-            for ( var j = 0, l2 = this.children.length; j < l2; j++ ) {
-                var cc = this.children[ j ];
+            bSphere.set( bb.center( bSphere.center() ), 0.0 );
+            // not to do that because bigger results
+            // check frustum culling sample
+            // bsphere.set( bb.center(), bb.radius() );
+            for ( i = 0; i < l; i++ ) {
+                cc = this.children[ i ];
                 if ( cc.referenceFrame === undefined || cc.referenceFrame === TransformEnums.RELATIVE_RF ) {
-                    bsphere.expandRadiusBySphere( cc.getBound() );
+                    bSphere.expandRadiusBySphere( cc.getBound() );
                 }
             }
-
-            return bsphere;
+            return bSphere;
         },
 
         getWorldMatrices: function ( halt ) {
@@ -258,9 +268,9 @@ define( [
                 this.halt = halt;
                 NodeVisitor.call( this, NodeVisitor.TRAVERSE_PARENTS );
             };
-            CollectParentPaths.prototype = MACROUTILS.objectInehrit( NodeVisitor.prototype, {
+            CollectParentPaths.prototype = MACROUTILS.objectInherit( NodeVisitor.prototype, {
                 apply: function ( node ) {
-                    if ( node.parents.length === 0 || node === this.halt ) {
+                    if ( node.parents.length === 0 || node === this.halt || ( node.referenceFrame !== undefined && node.referenceFrame === TransformEnums.ABSOLUTE_RF ) ) {
                         // copy
                         this.nodePaths.push( this.nodePath.slice( 0 ) );
                     } else {
@@ -287,8 +297,8 @@ define( [
             if ( this._cullingActive === value ) return;
             if ( this._numChildrenWithCullingDisabled === 0 && this.parents.length > 0 ) {
                 var delta = 0;
-                if ( !this._cullingActive )--delta;
-                if ( !value )++delta;
+                if ( !this._cullingActive ) --delta;
+                if ( !value ) ++delta;
                 if ( delta !== 0 ) {
                     for ( var i = 0, k = this.parents.length; i < k; i++ ) {
                         this.parents[ i ].setNumChildrenWithCullingDisabled( this.parents[ i ].getNumChildrenWithCullingDisabled() + delta );
@@ -310,8 +320,8 @@ define( [
             if ( this._numChildrenWithCullingDisabled === num ) return;
             if ( this._cullingActive && this.parents.length > 0 ) {
                 var delta = 0;
-                if ( this._numChildrenWithCullingDisabled > 0 )--delta;
-                if ( num > 0 )++delta;
+                if ( this._numChildrenWithCullingDisabled > 0 ) --delta;
+                if ( num > 0 ) ++delta;
                 if ( delta !== 0 ) {
                     for ( var i = 0, k = this.parents.length; i < k; i++ ) {
                         this.parents[ i ].setNumChildrenWithCullingDisabled( this.parents[ i ].getNumChildrenWithCullingDisabled() + delta );
@@ -323,6 +333,10 @@ define( [
 
         getNumChildrenWithCullingDisabled: function () {
             return this._numChildrenWithCullingDisabled;
+        },
+
+        releaseGLObjects: function ( /*gl*/) {
+            if ( this.stateset !== undefined ) this.stateset.releaseGLObjects();
         }
 
     } ), 'osg', 'Node' );

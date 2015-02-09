@@ -18,16 +18,10 @@ define( [
     };
 
     /** @lends BlendColor.prototype */
-    BlendColor.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInehrit( StateAttribute.prototype, {
+    BlendColor.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInherit( StateAttribute.prototype, {
         attributeType: 'BlendColor',
         cloneType: function () {
             return new BlendColor();
-        },
-        getType: function () {
-            return this.attributeType;
-        },
-        getTypeMember: function () {
-            return this.attributeType;
         },
         setConstantColor: function ( color ) {
             Vec4.copy( color, this._constantColor );

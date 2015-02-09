@@ -1,15 +1,15 @@
 define( [
-    'Q',
+    'q',
     'osg/Notify',
     'osg/Utils',
-    'osg/TextureManager',
     'osg/StateAttribute',
     'osg/Uniform',
     'osg/Image',
-    'osg/ShaderGenerator',
     'osgDB/ReaderParser',
     'osg/Map'
-], function ( Q, Notify, MACROUTILS, TextureManager, StateAttribute, Uniform, Image, ShaderGenerator, ReaderParser, Map ) {
+], function ( Q, Notify, MACROUTILS, StateAttribute, Uniform, Image, ReaderParser, Map ) {
+
+    'use strict';
 
     // helper
     var isPowerOf2 = function ( x ) {
@@ -19,16 +19,39 @@ define( [
     };
 
 
+    var checkAndFixEnum = function ( mode, fallback ) {
+        var value = Texture[ mode ];
+        if ( value === undefined ) {
+            Notify.warn( 'bad Texture enum argument ' + mode + '\n' + 'fallback to ' + fallback );
+            return fallback;
+        }
+        return value;
+    };
+
     /**
      * Texture encapsulate webgl texture object
      * @class Texture
+     * Not that dirty here is mainly for texture binding
+     * any dirty will cause re-bind
+     * hint: don't dirty a texture attached to a camera/framebuffer
+     * it will end blank
      * @inherits StateAttribute
      */
     var Texture = function () {
         StateAttribute.call( this );
         this.setDefaultParameters();
+        this._dirtyMipmap = true;
         this._applyTexImage2DCallbacks = [];
+        this._textureObject = undefined;
+
+        this._textureNull = true;
     };
+
+    Texture.UNPACK_COLORSPACE_CONVERSION_WEBGL = 0x9243;
+    Texture.UNPACK_FLIP_Y_WEBGL = 0x9240;
+    Texture.BROWSER_DEFAULT_WEBGL = 0x9244;
+    Texture.NONE = 0x0;
+
     Texture.DEPTH_COMPONENT = 0x1902;
     Texture.ALPHA = 0x1906;
     Texture.RGB = 0x1907;
@@ -43,6 +66,9 @@ define( [
     Texture.LINEAR_MIPMAP_NEAREST = 0x2701;
     Texture.NEAREST_MIPMAP_LINEAR = 0x2702;
     Texture.LINEAR_MIPMAP_LINEAR = 0x2703;
+    // filter anisotropy
+    Texture.TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE;
+    Texture.MAX_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FF;
 
     // wrap mode
     Texture.CLAMP_TO_EDGE = 0x812F;
@@ -63,23 +89,23 @@ define( [
 
     Texture.UNSIGNED_BYTE = 0x1401;
     Texture.FLOAT = 0x1406;
+    Texture.HALF_FLOAT_OES = Texture.HALF_FLOAT = 0x8D61;
 
-    Texture.textureManager = new TextureManager();
+    Texture.getEnumFromString = function( v ) {
+        var value = v;
+        if ( typeof ( value ) === 'string' ) {
+            value = checkAndFixEnum( value, v );
+        }
+        return value;
+    };
 
-    /** @lends Texture.prototype */
-    Texture.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInehrit( StateAttribute.prototype, {
+    Texture.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInherit( StateAttribute.prototype, {
         attributeType: 'Texture',
+
         cloneType: function () {
-            var t = new Texture();
-            t.defaultType = true;
-            return t;
+            return new Texture();
         },
-        getType: function () {
-            return this.attributeType;
-        },
-        getTypeMember: function () {
-            return this.attributeType;
-        },
+
         getOrCreateUniforms: function ( unit ) {
             if ( Texture.uniforms === undefined ) {
                 Texture.uniforms = [];
@@ -91,26 +117,55 @@ define( [
                 uniformMap.setMap( {
                     texture: uniform
                 } );
+
                 uniform.dirty();
                 Texture.uniforms[ unit ] = uniformMap;
             }
-            // uniform for an texture attribute should directly in Texture.uniforms[unit] and not in Texture.uniforms[unit][Texture0]
+
+            // uniform for an texture attribute should directly in Texture.uniforms[unit]
+            // and not in Texture.uniforms[unit][Texture0]
+
+            // Why it's in Texture.uniforms[unit]['texture'] :
+            // a 'texture' is a texture attribute but you also have old texenv
+            //  that are texture attribute because  they are applied on a texture unit.
+            // I admit that currently we dont have this or we used to but we dont have it anymore.
+            // It's the same design than osg.
+            // We could imagine for example a TextureGreyScale texture attributes,
+            // that would transform the input texture
+            // on unit X into greyscale used in the shader.
+
             return Texture.uniforms[ unit ];
         },
+
         setDefaultParameters: function () {
             this._image = undefined;
             this._magFilter = Texture.LINEAR;
             this._minFilter = Texture.LINEAR;
+            this._maxAnisotropy = 1.0;
             this._wrapS = Texture.CLAMP_TO_EDGE;
             this._wrapT = Texture.CLAMP_TO_EDGE;
             this._textureWidth = 0;
             this._textureHeight = 0;
             this._unrefImageDataAfterApply = false;
             this._internalFormat = undefined;
-            this._mipmapDirty = false;
+            this._dirtyMipmap = true;
             this._textureTarget = Texture.TEXTURE_2D;
             this._type = Texture.UNSIGNED_BYTE;
+
+            this._flipY = true;
+            this._colorSpaceConversion = Texture.NONE; //Texture.BROWSER_DEFAULT_WEBGL;
         },
+
+        // check https://www.khronos.org/registry/webgl/specs/latest/1.0/#PIXEL_STORAGE_PARAMETERS
+        setColorSpaceConversion: function ( enumValue ) {
+            this._colorSpaceConversion = enumValue;
+        },
+
+        setFlipY: function ( bool ) {
+            this._flipY = bool;
+        },
+
+
         getTextureTarget: function () {
             return this._textureTarget;
         },
@@ -118,20 +173,27 @@ define( [
             return this._textureObject;
         },
         setTextureSize: function ( w, h ) {
-            this._textureWidth = w;
-            this._textureHeight = h;
+            if ( w !== undefined ) this._textureWidth = w;
+            if ( h !== undefined ) this._textureHeight = h;
+
+            this._textureNull = false;
         },
-        init: function ( gl ) {
+
+        init: function ( state ) {
             if ( !this._textureObject ) {
-                this._textureObject = Texture.textureManager.generateTextureObject( gl,
-                                                                                    this,
-                                                                                    this._textureTarget,
-                                                                                    this._internalFormat,
-                                                                                    this._textureWidth,
-                                                                                    this._textureHeight );
+                this._textureObject = state.getTextureManager().generateTextureObject( state.getGraphicContext(),
+                    this,
+                    this._textureTarget,
+                    this._internalFormat,
+                    this._textureWidth,
+                    this._textureHeight );
+
                 this.dirty();
+                this._dirtyTextureObject = false;
+                this._textureNull = false;
             }
         },
+
         addApplyTexImage2DCallback: function ( callback ) {
             var index = this._applyTexImage2DCallbacks.indexOf( callback );
             if ( index < 0 ) {
@@ -150,28 +212,14 @@ define( [
         getHeight: function () {
             return this._textureHeight;
         },
-        releaseGLObjects: function ( gl ) {
 
+        releaseGLObjects: function ( state ) {
             if ( this._textureObject !== undefined && this._textureObject !== null ) {
-                this._textureObject.releaseTextureObject( gl );
+                state.getTextureManager().releaseTextureObject( this._textureObject );
                 this._textureObject = undefined;
-                this._image = undefined;
             }
         },
-        setWrapS: function ( value ) {
-            if ( typeof ( value ) === 'string' ) {
-                this._wrapS = Texture[ value ];
-            } else {
-                this._wrapS = value;
-            }
-        },
-        setWrapT: function ( value ) {
-            if ( typeof ( value ) === 'string' ) {
-                this._wrapT = Texture[ value ];
-            } else {
-                this._wrapT = value;
-            }
-        },
+
 
         getWrapT: function () {
             return this._wrapT;
@@ -179,6 +227,54 @@ define( [
         getWrapS: function () {
             return this._wrapS;
         },
+
+        setWrapS: function ( value ) {
+
+            if ( typeof ( value ) === 'string' ) {
+
+                this._wrapS = checkAndFixEnum( value, Texture.CLAMP_TO_EDGE );
+
+            } else {
+
+                this._wrapS = value;
+            }
+
+            this.dirtyTextureParameters();
+
+        },
+
+        setWrapT: function ( value ) {
+
+            if ( typeof ( value ) === 'string' ) {
+
+                this._wrapT = checkAndFixEnum( value, Texture.CLAMP_TO_EDGE );
+
+            } else {
+
+                this._wrapT = value;
+            }
+
+            this.dirtyTextureParameters();
+        },
+
+        // TODO CP:
+        // we should split dirty texture object of parameters
+        // dirty parameters only regenarate parameter
+        // dirty texture object needs to release a texture and
+        // re allocate one
+        dirtyTextureParameters: function () {
+            this.dirty(); // make everything dirty for now
+            this.dirtyMipmap();
+            this.dirtyTextureObject();
+        },
+
+        dirtyTextureObject: function () {
+            this._dirtyTextureObject = true;
+            this.dirtyMipmap();
+            this.dirty(); // make everything dirty for now
+        },
+
+
         getMinFilter: function () {
             return this._minFilter;
         },
@@ -186,37 +282,63 @@ define( [
             return this._magFilter;
         },
 
+        // https://www.opengl.org/registry/specs/EXT/texture_filter_anisotropic.txt
+        setMaxAnisotropy: function ( multiplier ) {
+            this._maxAnisotropy = multiplier;
+            this.dirtyTextureParameters();
+        },
+
+        getMaxAnisotropy: function () {
+            return this._maxAnisotropy;
+        },
+
+        // some value enable mipmapping
         setMinFilter: function ( value ) {
             if ( typeof ( value ) === 'string' ) {
-                this._minFilter = Texture[ value ];
+                this._minFilter = checkAndFixEnum( value, Texture.LINEAR );
             } else {
                 this._minFilter = value;
             }
+            this.dirtyTextureParameters();
         },
+
+        // Either Linear or nearest.
         setMagFilter: function ( value ) {
+
             if ( typeof ( value ) === 'string' ) {
-                this._magFilter = Texture[ value ];
+                this._magFilter = checkAndFixEnum( value, Texture.LINEAR );
             } else {
                 this._magFilter = value;
             }
+            this.dirtyTextureParameters();
         },
 
         setImage: function ( img, imageFormat ) {
 
             var image = img;
             if ( img instanceof window.Image ||
-                 img instanceof HTMLCanvasElement ||
-                 img instanceof Uint8Array ) {
-                     image = new Image( img );
-                 }
+                img instanceof HTMLCanvasElement ||
+                img instanceof Uint8Array ) {
+                image = new Image( img );
+            }
 
             this._image = image;
             this.setImageFormat( imageFormat );
+            if ( image ) {
+                if ( image.getWidth && image.getHeight ) {
+                    this.setTextureSize( image.getWidth(), image.getHeight() );
+                } else if ( image.width && image.height ) {
+                    this.setTextureSize( image.width, image.height );
+                }
+            }
+            this._textureNull = false;
             this.dirty();
         },
+
         getImage: function () {
             return this._image;
         },
+
         setImageFormat: function ( imageFormat ) {
             if ( imageFormat ) {
                 if ( typeof ( imageFormat ) === 'string' ) {
@@ -227,61 +349,108 @@ define( [
                 this._imageFormat = Texture.RGBA;
             }
         },
+
         setType: function ( value ) {
+            Notify.log( 'Texture.setType is deprecated, use instead Texture.setInternalFormatType' );
+            this.setInternalFormatType( value );
+        },
+
+        setInternalFormatType: function ( value ) {
             if ( typeof ( value ) === 'string' ) {
                 this._type = Texture[ value ];
             } else {
                 this._type = value;
             }
         },
+        getInternalFormatType: function () {
+            return this._type;
+        },
+
         setUnrefImageDataAfterApply: function ( bool ) {
             this._unrefImageDataAfterApply = bool;
         },
-        setInternalFormat: function ( internalFormat ) {
-            this._internalFormat = internalFormat;
+
+        setInternalFormat: function ( formatSource ) {
+            var format = formatSource;
+            if ( format ) {
+                if ( typeof ( format ) === 'string' ) {
+                    format = Texture[ format ];
+                }
+            } else {
+                format = Texture.RGBA;
+            }
+
+            this._internalFormat = format;
         },
+
         getInternalFormat: function () {
             return this._internalFormat;
         },
-        isMipmapDirty: function () {
-            return this._mipmapDirty;
+
+        isDirtyMipmap: function () {
+            return this._dirtyMipmap;
         },
         // Will cause the mipmaps to be regenerated on the next bind of the texture
         // Nothing will be done if the minFilter is not of the form XXX_MIPMAP_XXX
-        mipmapDirty: function () {
-            this._mipmapDirty = true;
+        dirtyMipmap: function () {
+            this._dirtyMipmap = true;
         },
+
         applyFilterParameter: function ( gl, target ) {
+
 
             var powerOfTwo = isPowerOf2( this._textureWidth ) && isPowerOf2( this._textureHeight );
             if ( !powerOfTwo ) {
-                this.setWrapT( Texture.CLAMP_TO_EDGE );
-                this.setWrapS( Texture.CLAMP_TO_EDGE );
+                // NPOT non support in webGL explained here
+                // https://www.khronos.org/webgl/wiki/WebGL_and_OpenGL_Differences#Non-Power_of_Two_Texture_Support
+                // so disabling mipmap...
+                this._wrapT = Texture.CLAMP_TO_EDGE;
+                this._wrapS = Texture.CLAMP_TO_EDGE;
 
                 if ( this._minFilter === Texture.LINEAR_MIPMAP_LINEAR ||
-                     this._minFilter === Texture.LINEAR_MIPMAP_NEAREST ) {
-                         this.setMinFilter( Texture.LINEAR );
-                     }
+                    this._minFilter === Texture.LINEAR_MIPMAP_NEAREST ) {
+                    this._minFilter = Texture.LINEAR;
+                }
             }
-
             gl.texParameteri( target, gl.TEXTURE_MAG_FILTER, this._magFilter );
             gl.texParameteri( target, gl.TEXTURE_MIN_FILTER, this._minFilter );
+
+
+            // handle extension EXT_texture_filter_anisotropic
+            if ( this._maxAnisotropy > 1.0 && Texture.ANISOTROPIC_SUPPORT_EXT ) {
+                var multiplier = this._maxAnisotropy < Texture.ANISOTROPIC_SUPPORT_MAX ? this._maxAnisotropy : Texture.ANISOTROPIC_SUPPORT_MAX;
+                gl.texParameterf( target, Texture.TEXTURE_MAX_ANISOTROPY_EXT, multiplier );
+            }
+
             gl.texParameteri( target, gl.TEXTURE_WRAP_S, this._wrapS );
             gl.texParameteri( target, gl.TEXTURE_WRAP_T, this._wrapT );
+
         },
 
         generateMipmap: function ( gl, target ) {
-            if ( this._minFilter === gl.NEAREST_MIPMAP_NEAREST ||
-                 this._minFilter === gl.LINEAR_MIPMAP_NEAREST ||
-                 this._minFilter === gl.NEAREST_MIPMAP_LINEAR ||
-                 this._minFilter === gl.LINEAR_MIPMAP_LINEAR ) {
-                    gl.generateMipmap( target );
-                    this._mipmapDirty = false;
-                 }
+
+            if ( this.hasMipmapFilter() ) {
+                gl.generateMipmap( target );
+            }
+            this._dirtyMipmap = false;
         },
+
+        // return true if contains a mipmap filter
+        hasMipmapFilter: function () {
+            return ( this._minFilter === Texture.NEAREST_MIPMAP_NEAREST ||
+                this._minFilter === Texture.LINEAR_MIPMAP_NEAREST ||
+                this._minFilter === Texture.NEAREST_MIPMAP_LINEAR ||
+                this._minFilter === Texture.LINEAR_MIPMAP_LINEAR );
+        },
+
         applyTexImage2D: function ( gl ) {
             var args = Array.prototype.slice.call( arguments, 1 );
             MACROUTILS.timeStamp( 'osgjs.metrics:Texture.texImage2d' );
+
+            // use parameters of pixel store
+            gl.pixelStorei( gl.UNPACK_FLIP_Y_WEBGL, this._flipY );
+            gl.pixelStorei( gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, this._colorSpaceConversion );
+
             gl.texImage2D.apply( gl, args );
 
             // call a callback when upload is done if there is one
@@ -292,7 +461,7 @@ define( [
                 }
             }
         },
-        computeTextureFormat: function() {
+        computeTextureFormat: function () {
             if ( !this._internalFormat ) {
                 this._internalFormat = this._imageFormat || Texture.RGBA;
                 this._imageFormat = this._internalFormat;
@@ -302,6 +471,13 @@ define( [
 
         },
         apply: function ( state ) {
+
+            // if need to release the texture
+            if ( this._dirtyTextureObject ) {
+                this.releaseGLObjects( state );
+                this._dirtyTextureObject = false;
+            }
+
             var gl = state.getGraphicContext();
 
             if ( this._textureObject !== undefined && !this.isDirty() ) {
@@ -309,11 +485,14 @@ define( [
                 // If we have modified the texture via Rtt or texSubImage2D and _need_ updated mipmaps,
                 // then we must regenerate the mipmaps explicitely.
                 // In all other cases, don't set this flag because it can be costly
-                if ( this.isMipmapDirty() ) {
+                if ( this.isDirtyMipmap() ) {
                     this.generateMipmap( gl, this._textureTarget );
                 }
-            } else if ( this.defaultType ) {
+
+            } else if ( this._textureNull ) {
+
                 gl.bindTexture( this._textureTarget, null );
+
             } else {
 
                 var image = this._image;
@@ -331,31 +510,30 @@ define( [
                         this.setTextureSize( imgWidth, imgHeight );
 
                         if ( !this._textureObject ) {
-                            this.init( gl );
+                            this.init( state );
                         }
 
-                        this.setDirty( false );
                         this._textureObject.bind( gl );
 
                         if ( image.isTypedArray() ) {
                             this.applyTexImage2D( gl,
-                                                  this._textureTarget,
-                                                  0,
-                                                  this._internalFormat,
-                                                  this._textureWidth,
-                                                  this._textureHeight,
-                                                  0,
-                                                  this._internalFormat,
-                                                  this._type,
-                                                  this._image.getImage() );
+                                this._textureTarget,
+                                0,
+                                this._internalFormat,
+                                this._textureWidth,
+                                this._textureHeight,
+                                0,
+                                this._internalFormat,
+                                this._type,
+                                this._image.getImage() );
                         } else {
                             this.applyTexImage2D( gl,
-                                                  this._textureTarget,
-                                                  0,
-                                                  this._internalFormat,
-                                                  this._internalFormat,
-                                                  this._type,
-                                                  image.getImage() );
+                                this._textureTarget,
+                                0,
+                                this._internalFormat,
+                                this._internalFormat,
+                                this._type,
+                                image.getImage() );
                         }
 
                         this.applyFilterParameter( gl, this._textureTarget );
@@ -364,6 +542,8 @@ define( [
                         if ( this._unrefImageDataAfterApply ) {
                             this._image = undefined;
                         }
+
+                        this.setDirty( false );
 
                     } else {
                         gl.bindTexture( this._textureTarget, null );
@@ -375,7 +555,7 @@ define( [
                     this.computeTextureFormat();
 
                     if ( !this._textureObject ) {
-                        this.init( gl );
+                        this.init( state );
                     }
                     this._textureObject.bind( gl );
                     this.applyTexImage2D( gl, this._textureTarget, 0, this._internalFormat, this._textureWidth, this._textureHeight, 0, this._internalFormat, this._type, null );
@@ -385,66 +565,10 @@ define( [
                     this.setDirty( false );
                 }
             }
-        },
-
-
-        /**
-         set the injection code that will be used in the shader generation
-         for FragmentMain part we would write something like that
-         @example
-         var fragmentGenerator = function(unit) {
-         var str = 'texColor' + unit + ' = texture2D( Texture' + unit + ', FragTexCoord' + unit + '.xy );\n';
-         str += 'fragColor = fragColor * texColor' + unit + ';\n';
-         };
-         setShaderGeneratorFunction(fragmentGenerator, ShaderGenerator.Type.FragmentMain);
-
-         */
-        setShaderGeneratorFunction: function (
-            /**Function*/
-            injectionFunction,
-            /**ShaderGenerator.Type*/
-            mode ) {
-                this[ mode ] = injectionFunction;
-            },
-
-        generateShader: function ( unit, type ) {
-            if ( this[ type ] ) {
-                return this[ type ].call( this, unit );
-            }
-            return '';
         }
     } ), 'osg', 'Texture' );
 
-    Texture.prototype[ ShaderGenerator.Type.VertexInit ] = function ( unit ) {
-        var str = 'attribute vec2 TexCoord' + unit + ';\n';
-        str += 'varying vec2 FragTexCoord' + unit + ';\n';
-        return str;
-    };
-    Texture.prototype[ ShaderGenerator.Type.VertexMain ] = function ( unit ) {
-        return 'FragTexCoord' + unit + ' = TexCoord' + unit + ';\n';
-    };
-    Texture.prototype[ ShaderGenerator.Type.FragmentInit ] = function ( unit ) {
-        var str = 'varying vec2 FragTexCoord' + unit + ';\n';
-        str += 'uniform sampler2D Texture' + unit + ';\n';
-        str += 'vec4 texColor' + unit + ';\n';
-        return str;
-    };
-    Texture.prototype[ ShaderGenerator.Type.FragmentMain ] = function ( unit ) {
-        var str = 'texColor' + unit + ' = texture2D( Texture' + unit + ', FragTexCoord' + unit + '.xy );\n';
-        str += 'fragColor = fragColor * texColor' + unit + ';\n';
-        return str;
-    };
-
-
-    Texture.createFromURL = function ( imageSource, format ) {
-        var texture = new Texture();
-        Q.when( ReaderParser.readImage( imageSource ) ).then(
-            function ( img ) {
-                texture.setImage( img, format );
-            }
-        );
-        return texture;
-    };
+    MACROUTILS.setTypeID( Texture );
 
     Texture.createFromImage = function ( image, format ) {
         var a = new Texture();
@@ -460,6 +584,18 @@ define( [
         Notify.log( 'Texture.create is deprecated, use Texture.createFromURL instead' );
         return Texture.createFromURL( url );
     };
+
+    Texture.createFromURL = function ( imageSource, format ) {
+        Notify.log( 'Texture.createFromURL is deprecated, use instead osgDB.readImageURL' );
+        var texture = new Texture();
+        Q.when( ReaderParser.readImage( imageSource ) ).then(
+            function ( img ) {
+                texture.setImage( img, format );
+            }
+        );
+        return texture;
+    };
+
 
     return Texture;
 } );

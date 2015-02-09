@@ -30,7 +30,7 @@ function getPostSceneToneMapping() {
     var currentSceneTexture = osg.Texture.createHDRFromURL( '../hdr/textures/Alexs_Apartment/Alexs_Apt_2k.hdr' );
     currentSceneTexture.addApplyTexImage2DCallback( function () {
         console.log( 'sceneTexture loaded' );
-        lumTexture.mipmapDirty();
+        lumTexture.dirtyMipmap();
     } );
 
     var lumTexture = new osg.Texture();
@@ -195,7 +195,7 @@ function getPostSceneToneMapping() {
             '}',
 
         ].join( '\n' ), {
-            'input_texture': currentSceneTexture,
+            'input_texture': currentSceneTexture
         }
     );
 
@@ -206,17 +206,17 @@ function getPostSceneToneMapping() {
             cachedScenes[ sceneFile ] = osg.Texture.createHDRFromURL( '../hdr/textures/' + sceneFile + '/' + scenes[ sceneFile ] );
             // On attends la fin du chargement de la texture pour générer la mipmap chain
             cachedScenes[ sceneFile ].addApplyTexImage2DCallback( function () {
-                lumTexture.mipmapDirty();
+                lumTexture.dirtyMipmap();
                 console.log( 'sceneTexture loaded from cache' );
             } );
         } else {
             // On flag la lumTexture pour regénérer la mipmap chain
-            lumTexture.mipmapDirty();
+            lumTexture.dirtyMipmap();
             console.log( 'sceneTexture loaded' );
         }
         currentSceneTexture = cachedScenes[ sceneFile ];
-        toneMappingFilter.getStateSet().setTextureAttributeAndMode( 0, currentSceneTexture );
-        luminanceComputeFilter.getStateSet().setTextureAttributeAndMode( 0, currentSceneTexture );
+        toneMappingFilter.getStateSet().setTextureAttributeAndModes( 0, currentSceneTexture );
+        luminanceComputeFilter.getStateSet().setTextureAttributeAndModes( 0, currentSceneTexture );
     }
 
     var effect = {

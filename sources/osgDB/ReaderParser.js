@@ -1,5 +1,5 @@
 define( [
-    'Q',
+    'q',
     'require',
     'osgDB/Input',
     'osg/Notify',
@@ -7,7 +7,6 @@ define( [
     'osg/Texture',
     'osg/Uniform',
     'osg/BlendFunc',
-    'osg/Material',
     'osg/Geometry',
     'osg/BufferArray',
     'osg/PrimitiveSet',
@@ -18,7 +17,8 @@ define( [
     'osg/Matrix',
     'osg/MatrixTransform',
     'osg/Projection'
-], function ( Q, require, Input, Notify, MACROUTILS, Texture, Uniform, BlendFunc, Material, Geometry, BufferArray, PrimitiveSet, DrawArrays, DrawElements, StateSet, Node, Matrix, MatrixTransform, Projection ) {
+], function ( Q, require, Input, Notify, MACROUTILS, Texture, Uniform, BlendFunc, Geometry, BufferArray, PrimitiveSet, DrawArrays, DrawElements, StateSet, Node, Matrix, MatrixTransform, Projection ) {
+
 
     var ReaderParser = {};
 
@@ -151,7 +151,7 @@ define( [
                     var tex = new Texture();
                     setTexture( tex, textures[ t ] );
 
-                    osgjs.setTextureAttributeAndMode( t, tex );
+                    osgjs.setTextureAttributeAndModes( t, tex );
                     osgjs.addUniform( Uniform.createInt1( t, 'Texture' + t ) );
                 }
             }
@@ -160,14 +160,15 @@ define( [
             if ( blendfunc ) {
                 var newblendfunc = new BlendFunc();
                 setBlendFunc( newblendfunc, blendfunc );
-                osgjs.setAttributeAndMode( newblendfunc );
+                osgjs.setAttributeAndModes( newblendfunc );
             }
 
             var material = getFieldBackwardCompatible( 'Material', json );
             if ( material ) {
+                var Material = require(  'osg/Material' );
                 var newmaterial = new Material();
                 setMaterial( newmaterial, material );
-                osgjs.setAttributeAndMode( newmaterial );
+                osgjs.setAttributeAndModes( newmaterial );
             }
         };
 

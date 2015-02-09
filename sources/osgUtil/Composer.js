@@ -16,7 +16,9 @@ define( [
     'osg/TransformEnums',
     'osg/Vec2',
     'osg/Vec3'
-], function ( Notify, MACROUTILS, Node, Depth, Texture, Camera, FrameBufferObject, Viewport, Matrix,  Uniform, StateSet, Program, Shader, Shape, TransformEnums, Vec2, Vec3 ) {
+], function ( Notify, MACROUTILS, Node, Depth, Texture, Camera, FrameBufferObject, Viewport, Matrix, Uniform, StateSet, Program, Shader, Shape, TransformEnums, Vec2, Vec3 ) {
+
+    'use strict';
 
     /*
      Composer is an helper to create post fx. The idea is to push one or more textures into a pipe of shader filter.
@@ -66,7 +68,7 @@ define( [
         this.getOrCreateStateSet().setAttributeAndModes( new Depth( 'DISABLE' ) );
     };
 
-    Composer.prototype = MACROUTILS.objectInehrit( Node.prototype, {
+    Composer.prototype = MACROUTILS.objectInherit( Node.prototype, {
         dirty: function () {
             for ( var i = 0, l = this._stack.length; i < l; i++ ) {
                 this._stack[ i ].filter.dirty();
@@ -78,21 +80,32 @@ define( [
         // addPass(filter, textureWidth, textureHeight) -> the filter will be done on a texture width and height
         // addPass(filter, texture) -> the filter will be done on the giver texture using its width and height
         addPass: function ( filter, arg0, arg1 ) {
+
+            // when arg0 is a texture
+            // arg1 is the target, can be TEXTURE_2D ( by default ) or
+            // a cubemape's face like TEXTURE_CUBE_MAP_POSITIVE_X, ...
             if ( arg0 instanceof Texture ) {
+
                 this._stack.push( {
                     filter: filter,
-                    texture: arg0
+                    texture: arg0,
+                    textureTarget: arg1 || Texture.TEXTURE_2D
                 } );
+
             } else if ( arg0 !== undefined && arg1 !== undefined ) {
+
                 this._stack.push( {
                     filter: filter,
                     width: Math.floor( arg0 ),
                     height: Math.floor( arg1 )
                 } );
+
             } else {
+
                 this._stack.push( {
                     filter: filter
                 } );
+
             }
         },
         renderToScreen: function ( w, h ) {
@@ -111,23 +124,33 @@ define( [
         },
 
         build: function () {
+
             var root = this;
             this.removeChildren();
             var lastTextureResult;
             var self = this;
+
             this._stack.forEach( function ( element, i, array ) {
+
                 if ( element.filter.isDirty() ) {
                     element.filter.build();
                 }
+
                 var stateSet = element.filter.getStateSet();
                 var w, h;
+
                 if ( element.texture !== undefined ) {
+
                     w = element.texture.getWidth();
                     h = element.texture.getHeight();
+
                 } else if ( element.width !== undefined && element.height !== undefined ) {
+
                     w = element.width;
                     h = element.height;
+
                 } else {
+
                     // get width from Texture0
                     var inputTexture = stateSet.getTextureAttribute( 0, 'Texture' );
                     if ( inputTexture === undefined ) {
@@ -163,11 +186,13 @@ define( [
                 } else {
                     camera.setRenderOrder( Camera.PRE_RENDER, 0 );
                     texture = element.texture;
+                    var textureTarget = element.textureTarget;
                     if ( texture === undefined ) {
                         texture = new Texture();
                         texture.setTextureSize( w, h );
+                        textureTarget = Texture.TEXTURE_2D;
                     }
-                    camera.attachTexture( FrameBufferObject.COLOR_ATTACHMENT0, texture, 0 );
+                    camera.attachTexture( FrameBufferObject.COLOR_ATTACHMENT0, texture, textureTarget );
                 }
 
                 var vp = new Viewport( 0, 0, w, h );
@@ -295,53 +320,33 @@ define( [
     ].join( '\n' );
 
     Composer.Filter.Helper = {
-        getOrCreatePascalCoefficients: function () {
-            var cache = Composer.Filter.Helper.getOrCreatePascalCoefficients.cache;
-            if ( cache !== undefined ) {
-                return cache;
+        pascalCache: [
+            [ 1 ]
+        ],
+        getOrCreatePascalCoefficients: function ( kernelSize ) {
+            kernelSize = kernelSize === undefined ? 5 : Math.min( kernelSize, 128 );
+            var cache = Composer.Filter.Helper.pascalCache;
+            if ( cache[ kernelSize ] )
+                return cache[ kernelSize ];
+            for ( var j = cache.length - 1; j < kernelSize; j++ ) {
+                var currentRow = cache[ j ];
+                var currentRowSize = currentRow.length;
+
+                var nextRow = new Array( currentRowSize );
+                nextRow[ 0 ] = 1.0;
+                nextRow[ currentRowSize ] = 1.0;
+
+                // unnormalized pascal
+                var sum = j === cache.length - 1 ? Math.pow( 2, j ) : 1.0;
+                for ( var p = 0; p < currentRowSize - 1; p++ )
+                    nextRow[ p + 1 ] = ( currentRow[ p ] + currentRow[ p + 1 ] ) * sum;
+                // normalized array
+                sum = Math.pow( 2, j + 1 );
+                for ( var k = 0; k < currentRowSize + 1; k++ )
+                    nextRow[ k ] /= sum;
+                cache.push( nextRow );
             }
-
-            cache = ( function ( kernelSize ) {
-                var pascalTriangle = [
-                    [ 1 ]
-                ];
-                for ( var j = 0; j < ( kernelSize - 1 ); j++ ) {
-                    //var sum = Math.pow( 2, j );
-                    var currentRow = pascalTriangle[ j ];
-                    var currentRowSize = currentRow.length;
-
-                    var nextRowSize = currentRowSize + 1;
-                    var nextRow = new Array( currentRowSize );
-                    nextRow[ 0 ] = 1.0;
-                    nextRow[ nextRowSize - 1 ] = 1.0;
-
-                    var idx = 1;
-                    for ( var p = 0; p < currentRowSize - 1; p++ ) {
-                        var val = ( currentRow[ p ] + currentRow[ p + 1 ] );
-                        nextRow[ idx++ ] = val;
-                    }
-                    pascalTriangle.push( nextRow );
-                }
-
-                // compute real coef dividing by sum
-                ( function () {
-                    for ( var a = 0; a < pascalTriangle.length; a++ ) {
-                        var row = pascalTriangle[ a ];
-                        //var str = '';
-
-                        var sum = Math.pow( 2, a );
-                        for ( var i = 0; i < row.length; i++ ) {
-                            row[ i ] = row[ i ] / sum;
-                            //str += row[i].toString() + ' ';
-                        }
-                        //Notify.log(str);
-                    }
-                } )();
-
-                return pascalTriangle;
-            } )( 20 );
-            Composer.Filter.Helper.getOrCreatePascalCoefficients.cache = cache;
-            return cache;
+            return cache[ kernelSize ];
         }
     };
 
@@ -352,7 +357,7 @@ define( [
         this._vertexShader = Composer.Filter.defaultVertexShader;
     };
 
-    Composer.Filter.Custom.prototype = MACROUTILS.objectInehrit( Composer.Filter.prototype, {
+    Composer.Filter.Custom.prototype = MACROUTILS.objectInherit( Composer.Filter.prototype, {
         build: function () {
 
             var program = new Program(
@@ -396,8 +401,9 @@ define( [
 
 
 
-    Composer.Filter.AverageHBlur = function ( nbSamplesOpt ) {
+    Composer.Filter.AverageHBlur = function ( nbSamplesOpt, linear ) {
         Composer.Filter.call( this );
+        this._noLinear = linear === false;
         if ( nbSamplesOpt === undefined ) {
             this.setBlurSize( 5 );
         } else {
@@ -406,7 +412,7 @@ define( [
         this._pixelSize = 1.0;
     };
 
-    Composer.Filter.AverageHBlur.prototype = MACROUTILS.objectInehrit( Composer.Filter.prototype, {
+    Composer.Filter.AverageHBlur.prototype = MACROUTILS.objectInherit( Composer.Filter.prototype, {
         setBlurSize: function ( nbSamples ) {
             if ( nbSamples % 2 !== 1 ) {
                 nbSamples += 1;
@@ -418,24 +424,78 @@ define( [
             this._pixelSize = value;
             this.dirty();
         },
+
         getUVOffset: function ( value ) {
-            return 'vec2(float(' + value + '), 0.0)/RenderSize[0];';
+            return 'vec2(float(' + value + ')/RenderSize[0], 0.0);';
         },
         getShaderBlurKernel: function () {
             var nbSamples = this._nbSamples;
+
+
             var kernel = [];
+
             kernel.push( ' pixel = texture2D(Texture0, FragTexCoord0 );' );
             kernel.push( ' if (pixel.w == 0.0) { gl_FragColor = pixel; return; }' );
             kernel.push( ' vec2 offset;' );
-            for ( var i = 1; i < Math.ceil( nbSamples / 2 ); i++ ) {
-                kernel.push( ' offset = ' + this.getUVOffset( i * this._pixelSize ) );
-                kernel.push( ' pixel += texture2D(Texture0, FragTexCoord0 + offset);' );
-                kernel.push( ' pixel += texture2D(Texture0, FragTexCoord0 - offset);' );
+            var i;
+            var numTexBlurStep = Math.floor( nbSamples / 2 );
+            if ( numTexBlurStep % 2 !== 0 ) {
+                nbSamples += 1;
+                numTexBlurStep = Math.floor( nbSamples / 2 );
             }
-            kernel.push( ' pixel /= float(' + nbSamples + ');' );
+            var numFinalSample = numTexBlurStep * 2.0 + 1.0;
+            var weight = 1.0 / numFinalSample;
+            if ( this._noLinear ) {
+                for ( i = 0; i < numTexBlurStep; i++ ) {
+                    kernel.push( ' offset = ' + this.getUVOffset( ( i + 1 ) * this._pixelSize ) );
+                    kernel.push( ' pixel += texture2D(Texture0, FragTexCoord0 + offset);' );
+                    kernel.push( ' pixel += texture2D(Texture0, FragTexCoord0 - offset);' );
+                }
+                kernel.push( ' pixel *= float(' + weight + ');' );
+
+                //console.log( 'N: Sum = ' + ( weight + numTexBlurStep * weight * 2 ) );
+                //console.log( 'N: nbSample = ' + nbSamples + ' texBlurStep= ' + numTexBlurStep + ' finalSample= ' + numFinalSample );
+                //console.log( 'N: w = ' + weight );
+
+            } else {
+                // using bilinear HW to divide texfetch by 2
+                var offset, offsetIdx;
+                var idx = 1;
+                var weightTwo = ( 1.0 - weight ) / ( numTexBlurStep * 2.0 );
+                // first pixel not same weight as others
+                kernel.push( ' pixel *= float(' + weight + ');' );
+                kernel.push( ' vec4 pixelLin = vec4(0.0);' );
+
+                for ( i = 0; i < numTexBlurStep; i += 2 ) {
+
+                    offsetIdx = idx + 0.5; //  ((i*weight + (i+1)*weight)/(weight+weight)) ===  (2i + 1) / 2 = i + 0.5
+                    idx += 2;
+                    offset = this.getUVOffset( offsetIdx * this._pixelSize );
+
+                    kernel.push( ' offset = ' + offset );
+
+                    kernel.push( ' pixelLin += texture2D(Texture0, FragTexCoord0 + offset);' );
+                    kernel.push( ' pixelLin += texture2D(Texture0, FragTexCoord0 - offset);' );
+                }
+                kernel.push( ' pixel += pixelLin * float(' + weightTwo * 2 + ');' );
+
+                //console.log( 'L: Sum = ' + ( weight + numTexBlurStep * weightTwo * 2 ) );
+                //console.log( 'L: nbSample = ' + nbSamples + ' texBlurStep= ' + numTexBlurStep + ' finalSample= ' + numFinalSample );
+                //console.log( 'N: w = ' + weight + ' numTexBlurStep  ' + numTexBlurStep + ' * w2 = ' + weightTwo );
+
+            }
             return kernel;
         },
         build: function () {
+
+            var tex = this._stateSet.getTextureAttribute( 0, 'Texture' );
+            if ( tex && !this._noLinear ) {
+                tex.setMinFilter( 'LINEAR' );
+                tex.setMagFilter( 'LINEAR' );
+            } else {
+                this._noLinear = true;
+            }
+
             //var nbSamples = this._nbSamples;
             var vtx = Composer.Filter.defaultVertexShader;
             var fgt = [
@@ -458,18 +518,20 @@ define( [
             if ( this._stateSet.getUniform( 'Texture0' ) === undefined ) {
                 this._stateSet.addUniform( Uniform.createInt1( 0, 'Texture0' ) );
             }
+
+
             this._stateSet.setAttributeAndModes( program );
             this._dirty = false;
         }
     } );
 
 
-    Composer.Filter.AverageVBlur = function ( nbSamplesOpt ) {
-        Composer.Filter.AverageHBlur.call( this, nbSamplesOpt );
+    Composer.Filter.AverageVBlur = function ( nbSamplesOpt, linear ) {
+        Composer.Filter.AverageHBlur.call( this, nbSamplesOpt, linear );
     };
-    Composer.Filter.AverageVBlur.prototype = MACROUTILS.objectInehrit( Composer.Filter.AverageHBlur.prototype, {
+    Composer.Filter.AverageVBlur.prototype = MACROUTILS.objectInherit( Composer.Filter.AverageHBlur.prototype, {
         getUVOffset: function ( value ) {
-            return 'vec2(0.0, float(' + value + '))/RenderSize[1];';
+            return 'vec2(0.0, float(' + value + ')/RenderSize[1]);';
         }
     } );
 
@@ -495,7 +557,7 @@ define( [
         this.setRadius( radius );
     };
 
-    Composer.Filter.BilateralHBlur.prototype = MACROUTILS.objectInehrit( Composer.Filter.prototype, {
+    Composer.Filter.BilateralHBlur.prototype = MACROUTILS.objectInherit( Composer.Filter.prototype, {
         setBlurSize: function ( nbSamples ) {
             if ( nbSamples % 2 !== 1 ) {
                 nbSamples += 1;
@@ -600,9 +662,9 @@ define( [
         Composer.Filter.BilateralHBlur.call( this, options );
     };
 
-    Composer.Filter.BilateralVBlur.prototype = MACROUTILS.objectInehrit( Composer.Filter.BilateralHBlur.prototype, {
+    Composer.Filter.BilateralVBlur.prototype = MACROUTILS.objectInherit( Composer.Filter.BilateralHBlur.prototype, {
         getUVOffset: function ( value ) {
-            return 'vec2(float(' + value + ')*pixelSize,0.0)/RenderSize[0];';
+            return 'vec2(float(' + value + ')*pixelSize/RenderSize[0],0.0);';
         }
     } );
 
@@ -612,15 +674,16 @@ define( [
         Composer.Filter.call( this );
         this._stateSet.setTextureAttributeAndModes( 0, texture );
     };
-    Composer.Filter.InputTexture.prototype = MACROUTILS.objectInehrit( Composer.Filter.prototype, {
+    Composer.Filter.InputTexture.prototype = MACROUTILS.objectInherit( Composer.Filter.prototype, {
         build: function () {
             this._dirty = false;
         }
     } );
 
     // Operate a Gaussian horizontal blur
-    Composer.Filter.HBlur = function ( nbSamplesOpt ) {
+    Composer.Filter.HBlur = function ( nbSamplesOpt, linear ) {
         Composer.Filter.call( this );
+        this._noLinear = linear === false;
         if ( nbSamplesOpt === undefined ) {
             this.setBlurSize( 5 );
         } else {
@@ -628,35 +691,87 @@ define( [
         }
     };
 
-    Composer.Filter.HBlur.prototype = MACROUTILS.objectInehrit( Composer.Filter.prototype, {
+    Composer.Filter.HBlur.prototype = MACROUTILS.objectInherit( Composer.Filter.prototype, {
         setBlurSize: function ( nbSamples ) {
-            if ( nbSamples % 2 !== 1 ) {
+            if ( nbSamples % 2 !== 0 ) {
                 nbSamples += 1;
             }
             this._nbSamples = nbSamples;
             this.dirty();
         },
         getUVOffset: function ( value ) {
-            return 'vec2(float(' + value + '), 0.0)/RenderSize[0];';
+            // TODO: could compute that in JS and remove 1 div per kernel step
+            return 'vec2(float(' + value + ')/ RenderSize[0], 0.0) ;';
         },
         build: function () {
             var nbSamples = this._nbSamples;
-            var vtx = Composer.Filter.defaultVertexShader;
-            var pascal = Composer.Filter.Helper.getOrCreatePascalCoefficients();
-            var weights = pascal[ nbSamples - 1 ];
-            var start = Math.floor( nbSamples / 2.0 );
-            var kernel = [];
-            kernel.push( ' pixel += float(' + weights[ start ] + ')*texture2D(Texture0, FragTexCoord0 ).rgb;' );
-            var offset = 1;
-            kernel.push( ' vec2 offset;' );
-            for ( var i = start + 1; i < nbSamples; i++ ) {
-                var weight = weights[ i ];
-                kernel.push( ' offset = ' + this.getUVOffset( i ) );
-                offset++;
-                kernel.push( ' pixel += ' + weight + '*texture2D(Texture0, FragTexCoord0 + offset).rgb;' );
-                kernel.push( ' pixel += ' + weight + '*texture2D(Texture0, FragTexCoord0 - offset).rgb;' );
+
+            // TODO: get rendersize from that and precompute
+            // offset when possible
+            var tex = this._stateSet.getTextureAttribute( 0, 'Texture' );
+            if ( tex && !this._noLinear ) {
+                tex.setMinFilter( 'LINEAR' );
+                tex.setMagFilter( 'LINEAR' );
+            } else {
+                this._noLinear = true;
             }
 
+            var vtx = Composer.Filter.defaultVertexShader;
+
+
+            // http://rastergrid.com/blog/2010/09/efficient-gaussian-blur-with-linear-sampling/
+            // outermost are near 0, so unless float buffer...
+            // at samples = 6 already it's 1/32 = 0.03
+            // so we lessen texFetch (allow higher kernel size with less texfetch)
+            var weightMin = 0.005 / nbSamples;
+            var coeffIdx = nbSamples;
+            var weights = Composer.Filter.Helper.getOrCreatePascalCoefficients( coeffIdx );
+            var start = Math.floor( coeffIdx / 2.0 );
+
+            var kernel = [];
+            kernel.push( ' pixel = float(' + weights[ start ] + ')*texture2D(Texture0, FragTexCoord0 ).rgb;' );
+
+            kernel.push( ' vec2 offset;' );
+            var idx, i, weight, offset, offsetIdx;
+            if ( this._noLinear ) {
+                idx = 1;
+                for ( i = start + 1; i < nbSamples; i++ ) {
+                    weight = weights[ i ];
+
+                    if ( weight < weightMin ) break;
+
+                    offsetIdx = idx++;
+                    offset = this.getUVOffset( offsetIdx );
+
+                    kernel.push( ' offset = ' + offset );
+                    kernel.push( ' pixel += ' + weight + '* texture2D(Texture0, (FragTexCoord0.xy + offset.xy)).rgb;' );
+                    kernel.push( ' pixel += ' + weight + '* texture2D(Texture0, (FragTexCoord0.xy - offset.xy)).rgb;' );
+                }
+            } else {
+
+                // using bilinear HW to divide texfetch by 2
+                // http://www.rastergrid.com/blog/wp-content/uploads/2010/09/equation.png
+                idx = 1;
+                for ( i = start + 1; i < nbSamples; i += 2 ) {
+                    var weightT1 = weights[ i ];
+                    var weightT2 = weights[ i + 1 ];
+
+                    weight = weightT1 + weightT2;
+
+                    if ( weight < weightMin ) break;
+
+                    var offsetT1 = idx;
+                    var offsetT2 = idx + 1;
+                    idx += 2;
+
+                    offsetIdx = ( offsetT1 * weightT1 + offsetT2 * weightT2 ) / weight;
+                    offset = this.getUVOffset( offsetIdx );
+
+                    kernel.push( ' offset = ' + offset );
+                    kernel.push( ' pixel += ' + weight + '* texture2D(Texture0, (FragTexCoord0.xy + offset.xy)).rgb;' );
+                    kernel.push( ' pixel += ' + weight + '* texture2D(Texture0, (FragTexCoord0.xy - offset.xy)).rgb;' );
+                }
+            }
             var fgt = [
                 Composer.Filter.defaultFragmentShaderHeader,
                 'uniform float width;',
@@ -683,13 +798,13 @@ define( [
     } );
 
     // Operate a Gaussian vertical blur
-    Composer.Filter.VBlur = function ( /*nbSamplesOpt*/ ) {
-        Composer.Filter.HBlur.call( this );
+    Composer.Filter.VBlur = function ( nbSamplesOpt, linear ) {
+        Composer.Filter.HBlur.call( this, nbSamplesOpt, linear );
     };
 
-    Composer.Filter.VBlur.prototype = MACROUTILS.objectInehrit( Composer.Filter.HBlur.prototype, {
+    Composer.Filter.VBlur.prototype = MACROUTILS.objectInherit( Composer.Filter.HBlur.prototype, {
         getUVOffset: function ( value ) {
-            return 'vec2(0.0, float(' + value + '))/RenderSize[1];';
+            return 'vec2(0.0, float(' + value + ')/RenderSize[1]) ;';
         }
     } );
 
@@ -701,7 +816,7 @@ define( [
         this._factor = Uniform.createFloat( 1.0, 'factor' );
     };
 
-    Composer.Filter.SobelFilter.prototype = MACROUTILS.objectInehrit( Composer.Filter.prototype, {
+    Composer.Filter.SobelFilter.prototype = MACROUTILS.objectInherit( Composer.Filter.prototype, {
         setColor: function ( color ) {
             this._color.get()[ 0 ] = color[ 0 ];
             this._color.get()[ 1 ] = color[ 1 ];
@@ -786,7 +901,7 @@ define( [
         stateSet.addUniform( this._mixValueUniform );
     };
 
-    Composer.Filter.BlendMix.prototype = MACROUTILS.objectInehrit( Composer.Filter.prototype, {
+    Composer.Filter.BlendMix.prototype = MACROUTILS.objectInherit( Composer.Filter.prototype, {
         getBlendFactorUniform: function () {
             return this._mixValueUniform;
         },
@@ -837,7 +952,7 @@ define( [
         stateSet.addUniform( Uniform.createInt1( unit1, 'Texture1' ) );
     };
 
-    Composer.Filter.BlendMultiply.prototype = MACROUTILS.objectInehrit( Composer.Filter.prototype, {
+    Composer.Filter.BlendMultiply.prototype = MACROUTILS.objectInherit( Composer.Filter.prototype, {
         build: function () {
             var vtx = Composer.Filter.defaultVertexShader;
             var fgt = [
@@ -901,7 +1016,7 @@ define( [
 
     };
 
-    Composer.Filter.SSAO.prototype = MACROUTILS.objectInehrit( Composer.Filter.prototype, {
+    Composer.Filter.SSAO.prototype = MACROUTILS.objectInherit( Composer.Filter.prototype, {
 
         initNoise: function () {
             var sizeNoise = this._noiseTextureSize;
@@ -1094,7 +1209,7 @@ define( [
         Composer.Filter.SSAO.call( this, options );
     };
 
-    Composer.Filter.SSAO8.prototype = MACROUTILS.objectInehrit( Composer.Filter.SSAO.prototype, {
+    Composer.Filter.SSAO8.prototype = MACROUTILS.objectInherit( Composer.Filter.SSAO.prototype, {
         buildGeometry: function ( quad ) {
             quad.getAttributes().TexCoord1 = this._texCoord1;
             return quad;

@@ -1,4 +1,6 @@
-define( [ 'osg/FrameStamp' ], function ( FrameStamp ) {
+define( [], function () {
+
+    'use strict';
 
     var NodeVisitor = function ( traversalMode ) {
         /*jshint bitwise: false */
@@ -11,15 +13,10 @@ define( [ 'osg/FrameStamp' ], function ( FrameStamp ) {
         }
         this.nodePath = [];
         this.visitorType = NodeVisitor.NODE_VISITOR;
-
-        var framestamp = new FrameStamp();
-        this.getFrameStamp = function () {
-            return framestamp;
-        };
-        this.setFrameStamp = function ( s ) {
-            framestamp = s;
-        };
+        this._databaseRequestHandler = undefined;
+        this._frameStamp = undefined;
     };
+
     //NodeVisitor.TRAVERSE_NONE = 0;
     NodeVisitor.TRAVERSE_PARENTS = 1;
     NodeVisitor.TRAVERSE_ALL_CHILDREN = 2;
@@ -28,7 +25,7 @@ define( [ 'osg/FrameStamp' ], function ( FrameStamp ) {
     NodeVisitor.UPDATE_VISITOR = 1;
     NodeVisitor.CULL_VISITOR = 2;
 
-    
+
     NodeVisitor._traversalFunctions = {};
     NodeVisitor._traversalFunctions[ NodeVisitor.TRAVERSE_PARENTS ] = function ( node ) {
         node.ascend( this );
@@ -36,11 +33,11 @@ define( [ 'osg/FrameStamp' ], function ( FrameStamp ) {
     NodeVisitor._traversalFunctions[ NodeVisitor.TRAVERSE_ALL_CHILDREN ] = function ( node ) {
         node.traverse( this );
     };
-	NodeVisitor._traversalFunctions[ NodeVisitor.TRAVERSE_ACTIVE_CHILDREN ] = function ( node ) {
+    NodeVisitor._traversalFunctions[ NodeVisitor.TRAVERSE_ACTIVE_CHILDREN ] = function ( node ) {
         node.traverse( this );
     };
-	
-	
+
+
     NodeVisitor._pushOntoNodePath = {};
     NodeVisitor._pushOntoNodePath[ NodeVisitor.TRAVERSE_PARENTS ] = function ( node ) {
         this.nodePath.unshift( node );
@@ -48,7 +45,7 @@ define( [ 'osg/FrameStamp' ], function ( FrameStamp ) {
     NodeVisitor._pushOntoNodePath[ NodeVisitor.TRAVERSE_ALL_CHILDREN ] = function ( node ) {
         this.nodePath.push( node );
     };
-	NodeVisitor._pushOntoNodePath[ NodeVisitor.TRAVERSE_ACTIVE_CHILDREN ] = function ( node ) {
+    NodeVisitor._pushOntoNodePath[ NodeVisitor.TRAVERSE_ACTIVE_CHILDREN ] = function ( node ) {
         this.nodePath.push( node );
     };
     NodeVisitor._popFromNodePath = {};
@@ -58,11 +55,21 @@ define( [ 'osg/FrameStamp' ], function ( FrameStamp ) {
     NodeVisitor._popFromNodePath[ NodeVisitor.TRAVERSE_ALL_CHILDREN ] = function () {
         this.nodePath.pop();
     };
-	NodeVisitor._popFromNodePath[ NodeVisitor.TRAVERSE_ACTIVE_CHILDREN ] = function () {
+    NodeVisitor._popFromNodePath[ NodeVisitor.TRAVERSE_ACTIVE_CHILDREN ] = function () {
         this.nodePath.pop();
     };
 
     NodeVisitor.prototype = {
+
+        setFrameStamp: function ( frameStamp ) {
+            this._frameStamp = frameStamp;
+        },
+
+        getFrameStamp: function () {
+            return this._frameStamp;
+        },
+
+
         setNodeMaskOverride: function ( m ) {
             this.nodeMaskOverride = m;
         },
@@ -75,6 +82,10 @@ define( [ 'osg/FrameStamp' ], function ( FrameStamp ) {
         },
         getTraversalMask: function () {
             return this.traversalMask;
+        },
+
+        getNodePath: function () {
+            return this.nodePath;
         },
 
         pushOntoNodePath: function ( node ) {
@@ -95,8 +106,15 @@ define( [ 'osg/FrameStamp' ], function ( FrameStamp ) {
         traverse: function ( node ) {
             NodeVisitor._traversalFunctions[ this.traversalMode ].call( this, node );
         },
-        getVisitorType: function ( ) {
+        getVisitorType: function () {
             return this.visitorType;
+        },
+        setDatabaseRequestHandler: function ( dbpager )
+        {
+            this._databaseRequestHandler = dbpager;
+        },
+        getDatabaseRequestHandler: function () {
+            return this._databaseRequestHandler;
         }
     };
 

@@ -555,7 +555,7 @@ CullCallback.prototype = {
         var matrix = nv.getCurrentProjectionMatrix();
         this._projection = matrix;
         matrix._projection = 'me';
-        matrix = nv.getCurrentModelviewMatrix();
+        matrix = nv.getCurrentModelViewMatrix();
         this._modelview = matrix;
         return true;
     }
@@ -601,7 +601,7 @@ function createSceneReal() {
         var texture = new osg.Texture();
         if ( extension ) {
             osg.log( extension );
-            texture.setType( 'FLOAT' );
+            texture.setInternalFormatType( 'FLOAT' );
         }
         texture.setTextureSize( textureSize[ 0 ], textureSize[ 1 ] );
         texture.setMinFilter( 'LINEAR' );
@@ -612,7 +612,7 @@ function createSceneReal() {
 
         var positionTexture = new osg.Texture();
         if ( extension ) {
-            positionTexture.setType( 'FLOAT' );
+            positionTexture.setInternalFormatType( 'FLOAT' );
         }
         positionTexture.setTextureSize( textureSize[ 0 ], textureSize[ 1 ] );
         positionTexture.setMinFilter( 'LINEAR' );
@@ -1057,7 +1057,7 @@ function createSceneTestNormal() {
             var texture = new osg.Texture();
             if ( extension ) {
                 osg.log( extension );
-                texture.setType( 'FLOAT' );
+                texture.setInternalFormatType( 'FLOAT' );
             }
             texture.setTextureSize( textureSize[ 0 ], textureSize[ 1 ] );
             texture.setMinFilter( 'NEAREST' );
@@ -1160,7 +1160,7 @@ function createSceneTestReconstructPosition() {
             var positionTexture = new osg.Texture();
             var extension = Viewer.getState().getGraphicContext().getExtension( 'OES_texture_float' );
             if ( extension ) {
-                positionTexture.setType( 'FLOAT' );
+                positionTexture.setInternalFormatType( 'FLOAT' );
             }
             positionTexture.setTextureSize( textureSize[ 0 ], textureSize[ 1 ] );
             positionTexture.setMinFilter( 'NEAREST' );
@@ -1298,7 +1298,7 @@ function createSceneTestReconstructPosition() {
 
                     var coord = this._geom.getAttributes().TexCoord1.getElements();
                     var vectorsTmp = [];
-                    osg.Matrix.computeFrustrumCornersVectors( this._projection.get(), vectorsTmp );
+                    osg.Matrix.computeFrustumCornersVectors( this._projection.get(), vectorsTmp );
                     var vectors = [];
                     vectors[ 0 ] = vectorsTmp[ 0 ];
                     vectors[ 1 ] = vectorsTmp[ 1 ];
@@ -1686,7 +1686,7 @@ function createSceneOptimized( width, height ) {
 
                 var coord = this._array.getElements();
                 var vectorsTmp = [];
-                osg.Matrix.computeFrustrumCornersVectors( this._projection.get(), vectorsTmp );
+                osg.Matrix.computeFrustumCornersVectors( this._projection.get(), vectorsTmp );
                 var vectors = [];
                 vectors[ 0 ] = vectorsTmp[ 0 ];
                 vectors[ 1 ] = vectorsTmp[ 1 ];

@@ -27,16 +27,10 @@ define( [
         this._dirty = true;
     };
 
-    Viewport.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInehrit( StateAttribute.prototype, {
+    Viewport.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInherit( StateAttribute.prototype, {
         attributeType: 'Viewport',
         cloneType: function () {
             return new Viewport();
-        },
-        getType: function () {
-            return this.attributeType;
-        },
-        getTypeMember: function () {
-            return this.attributeType;
         },
         apply: function ( state ) {
             var gl = state.getGraphicContext();

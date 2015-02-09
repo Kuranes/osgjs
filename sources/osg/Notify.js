@@ -14,9 +14,11 @@ define( [], function () {
     /** Obtain a stacktrace from the current stack http://eriwen.com/javascript/js-stack-trace/
      */
     function getStackTrace( err ) {
-		if (Notify.console && Notify.console.trace){
-			Notify.console.trace();
-			return '';
+        if ( Notify.console && Notify.console.trace ) {
+            if ( Notify.console.groupCollapsed ) Notify.console.groupCollapsed();
+            Notify.console.trace();
+            if ( Notify.console.groupEnd ) Notify.console.groupEnd();
+            return '';
         }
         var callstack = [];
         try {
@@ -46,41 +48,56 @@ define( [], function () {
 
         return callstack;
     }
+    /** logging with readability in mind.
+     * @param { str } actual log text
+     * @param { fold  }  sometimes you want to hide looooong text
+     * @param { noTrace  } where that log came from ?
+     * @param { level  } what severity is that log (gives text color too )
+     */
+    function logSub( str, level, fold, noTrace ) {
+        if ( Notify.console !== undefined ) {
+            if ( fold && Notify.console.groupCollapsed ) Notify.console.groupCollapsed();
+            if ( noTrace ) {
+                Notify.console[ level ]( str );
+            } else {
+                Notify.console[ level ]( str, getStackTrace() );
+            }
+            if ( fold && Notify.console.groupEnd ) Notify.console.groupEnd();
+        }
+    }
 
     Notify.setNotifyLevel = function ( level ) {
 
-        var log = function ( str ) {
-            if ( this.console !== undefined ) {
-                this.console.log( str, getStackTrace() );
-            }
+
+        var log = function ( str, fold, noTrace ) {
+            logSub( str, 'log', fold, noTrace );
         };
 
-        var info = function ( str ) {
-            if ( this.console !== undefined ) {
-                this.console.info( str, getStackTrace() );
-            }
+        var info = function ( str, fold, noTrace ) {
+            logSub( str, 'info', fold, noTrace );
         };
 
-        var warn = function ( str ) {
-            if ( this.console !== undefined ) {
-                this.console.warn( str, getStackTrace() );
-            }
+        var warn = function ( str, fold, noTrace ) {
+            logSub( str, 'warn', fold, noTrace );
         };
 
-        var error = function ( str ) {
-            if ( this.console !== undefined ) {
-                this.console.error( str, getStackTrace() );
-            }
+        var error = function ( str, fold ) {
+            logSub( str, 'error', fold, true ); // error does trace auto
         };
 
-        var debug = function ( str ) {
+        var debug = function ( str, fold, noTrace ) {
+            logSub( str, 'debug', fold, noTrace );
+        };
+
+        var assert = function ( test, str ) {
             if ( this.console !== undefined ) {
-                this.console.debug( str, getStackTrace() );
+                this.console.assert( test, str, getStackTrace() );
             }
         };
 
         var dummy = function () {};
 
+        Notify.assert = dummy;
         Notify.debug = dummy;
         Notify.info = dummy;
         Notify.log = Notify.notice = dummy;
@@ -89,6 +106,7 @@ define( [], function () {
 
         if ( level <= Notify.DEBUG ) {
             Notify.debug = debug;
+            Notify.assert = assert;
         }
         if ( level <= Notify.INFO ) {
             Notify.info = info;
@@ -108,7 +126,7 @@ define( [], function () {
 
     Notify.reportWebGLError = false;
 
-    Notify.setConsole = function( replacement ) {
+    Notify.setConsole = function ( replacement ) {
         Notify.console = replacement;
     };
 

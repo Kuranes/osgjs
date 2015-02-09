@@ -3,133 +3,125 @@ define( [
     'osg/StateAttribute',
     'osg/Vec4',
     'osg/Uniform',
-    'osg/ShaderGenerator',
     'osg/Map'
-], function ( MACROUTILS, StateAttribute, Vec4, Uniform, ShaderGenerator, Map ) {
+], function ( MACROUTILS, StateAttribute, Vec4, Uniform, Map ) {
+    'use strict';
 
-    /**
-     * Material
-     * @class Material
-     */
+    // Define a material attribute
     var Material = function () {
         StateAttribute.call( this );
-        this.ambient = [ 0.2, 0.2, 0.2, 1.0 ];
-        this.diffuse = [ 0.8, 0.8, 0.8, 1.0 ];
-        this.specular = [ 0.0, 0.0, 0.0, 1.0 ];
-        this.emission = [ 0.0, 0.0, 0.0, 1.0 ];
-        this.shininess = 12.5;
+        this._ambient = [ 0.2, 0.2, 0.2, 1.0 ];
+        this._diffuse = [ 0.8, 0.8, 0.8, 1.0 ];
+        this._specular = [ 0.0, 0.0, 0.0, 1.0 ];
+        this._emission = [ 0.0, 0.0, 0.0, 1.0 ];
+        this._shininess = 12.5;
+        this._shadeless = false;
     };
-    /** @lends Material.prototype */
-    Material.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInehrit( StateAttribute.prototype, {
+
+    Material.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInherit( StateAttribute.prototype, {
+
+        attributeType: 'Material',
+
+        cloneType: function () {
+            return new Material();
+        },
+
+        getParameterName: function ( name ) {
+            return this.getType() + '_uniform_' + name;
+        },
+
+        getOrCreateUniforms: function () {
+            var obj = Material;
+            if ( obj.uniforms ) return obj.uniforms;
+
+            var uniformList = {
+                'ambient': Uniform.createFloat4( [ 0, 0, 0, 0 ], 'MaterialAmbient' ),
+                'diffuse': Uniform.createFloat4( [ 0, 0, 0, 0 ], 'MaterialDiffuse' ),
+                'specular': Uniform.createFloat4( [ 0, 0, 0, 0 ], 'MaterialSpecular' ),
+                'emission': Uniform.createFloat4( [ 0, 0, 0, 0 ], 'MaterialEmission' ),
+                'shininess': Uniform.createFloat1( [ 0 ], 'MaterialShininess' )
+            };
+
+            obj.uniforms = new Map( uniformList );
+            return obj.uniforms;
+        },
+
+
         setEmission: function ( a ) {
-            Vec4.copy( a, this.emission );
-            this._dirty = true;
-        },
-        setAmbient: function ( a ) {
-            Vec4.copy( a, this.ambient );
-            this._dirty = true;
-        },
-        setSpecular: function ( a ) {
-            Vec4.copy( a, this.specular );
-            this._dirty = true;
-        },
-        setDiffuse: function ( a ) {
-            Vec4.copy( a, this.diffuse );
-            this._dirty = true;
-        },
-        setShininess: function ( a ) {
-            this.shininess = a;
+            Vec4.copy( a, this._emission );
             this._dirty = true;
         },
 
         getEmission: function () {
-            return this.emission;
+            return this._emission;
         },
+
+
+        setAmbient: function ( a ) {
+            Vec4.copy( a, this._ambient );
+            this._dirty = true;
+        },
+
         getAmbient: function () {
-            return this.ambient;
+            return this._ambient;
         },
+
+
+        setSpecular: function ( a ) {
+            Vec4.copy( a, this._specular );
+            this._dirty = true;
+        },
+
         getSpecular: function () {
-            return this.specular;
+            return this._specular;
         },
+
+
+        setDiffuse: function ( a ) {
+            Vec4.copy( a, this._diffuse );
+            this._dirty = true;
+        },
+
         getDiffuse: function () {
-            return this.diffuse;
+            return this._diffuse;
         },
+
+
+        setShininess: function ( a ) {
+            this._shininess = a;
+            this._dirty = true;
+        },
+
         getShininess: function () {
-            return this.shininess;
-        },
-
-        attributeType: 'Material',
-        cloneType: function () {
-            return new Material();
-        },
-        getType: function () {
-            return this.attributeType;
-        },
-        getTypeMember: function () {
-            return this.attributeType;
-        },
-        getOrCreateUniforms: function () {
-            if ( Material.uniforms === undefined ) {
-                var map = new Map();
-                Material.uniforms = map;
-                map.setMap( {
-                    'ambient': Uniform.createFloat4( [ 0, 0, 0, 0 ], 'MaterialAmbient' ),
-                    'diffuse': Uniform.createFloat4( [ 0, 0, 0, 0 ], 'MaterialDiffuse' ),
-                    'specular': Uniform.createFloat4( [ 0, 0, 0, 0 ], 'MaterialSpecular' ),
-                    'emission': Uniform.createFloat4( [ 0, 0, 0, 0 ], 'MaterialEmission' ),
-                    'shininess': Uniform.createFloat1( [ 0 ], 'MaterialShininess' )
-                } );
-            }
-            return Material.uniforms;
-        },
-
-        apply: function ( /*state*/ ) {
-            var uniformMap = this.getOrCreateUniforms();
-
-            uniformMap.ambient.set( this.ambient );
-            uniformMap.diffuse.set( this.diffuse );
-            uniformMap.specular.set( this.specular );
-            uniformMap.emission.set( this.emission );
-            uniformMap.shininess.set( [ this.shininess ] );
-            this._dirty = false;
+            return this._shininess;
         },
 
 
-        // will contain functions to generate shader
-        _shader: {},
-        _shaderCommon: {},
+        setTransparency: function ( a ) {
+            this._diffuse[ 3 ] = 1.0 - a;
+            this._dirty = true;
+        },
 
-        generateShader: function ( type ) {
-            if ( this._shader[ type ] ) {
-                return this._shader[ type ].call( this );
-            }
-            return '';
+        getTransparency: function () {
+            return this._diffuse[ 3 ];
+        },
+
+
+
+        apply: function ( /*state*/) {
+            var uniforms = this.getOrCreateUniforms();
+
+            uniforms.ambient.set( this._ambient );
+            uniforms.diffuse.set( this._diffuse );
+            uniforms.specular.set( this._specular );
+            uniforms.emission.set( this._emission );
+            uniforms.shininess.set( [ this._shininess ] );
+
+            this.setDirty( false );
         }
 
+
     } ), 'osg', 'Material' );
-
-
-    Material.prototype._shader[ ShaderGenerator.Type.VertexInit ] = function () {
-        var str = [ 'uniform vec4 MaterialAmbient;',
-            'uniform vec4 MaterialDiffuse;',
-            'uniform vec4 MaterialSpecular;',
-            'uniform vec4 MaterialEmission;',
-            'uniform float MaterialShininess;',
-            ''
-        ].join( '\n' );
-        return str;
-    };
-
-    Material.prototype._shader[ ShaderGenerator.Type.FragmentInit ] = function () {
-        var str = [ 'uniform vec4 MaterialAmbient;',
-            'uniform vec4 MaterialDiffuse;',
-            'uniform vec4 MaterialSpecular;',
-            'uniform vec4 MaterialEmission;',
-            'uniform float MaterialShininess;',
-            ''
-        ].join( '\n' );
-        return str;
-    };
 
     return Material;
 } );

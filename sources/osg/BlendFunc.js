@@ -54,7 +54,7 @@ define( [
 
 
     /** @lends BlendFunc.prototype */
-    BlendFunc.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInehrit( StateAttribute.prototype, {
+    BlendFunc.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInherit( StateAttribute.prototype, {
         /**
     StateAttribute type of BlendFunc
     @type String
@@ -65,18 +65,6 @@ define( [
         */
         cloneType: function () /**BlendFunc*/ {
             return new BlendFunc();
-        },
-        /**
-        @type String
-        */
-        getType: function () {
-            return this.attributeType;
-        },
-        /**
-        @type String
-        */
-        getTypeMember: function () {
-            return this.attributeType;
         },
         setSource: function ( f ) {
             this.setSourceRGB( f );

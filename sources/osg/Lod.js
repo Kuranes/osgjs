@@ -32,7 +32,7 @@ define( [
     Lod.UNION_OF_BOUNDING_SPHERE_AND_USER_DEFINED = 2;
 
     /** @lends Lod.prototype */
-    Lod.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInehrit( Node.prototype, {
+    Lod.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInherit( Node.prototype, {
         // Functions here
         getRadius: function () {
             return this._radius;
@@ -70,7 +70,7 @@ define( [
             {
                 bsphere.set( this._userDefinedCenter, this._radius);
                 var bs = new BoundingSphere();
-                bsphere.expandBy( Node.prototype.computeBound.call( this, bs ) );
+                bsphere.expandByBoundingSphere( Node.prototype.computeBound.call( this, bs ) );
                 return bsphere;
             }
             else
@@ -148,7 +148,7 @@ define( [
 
                 case ( NodeVisitor.TRAVERSE_ACTIVE_CHILDREN ):
                     var requiredRange = 0;
-                    var matrix = visitor.getCurrentModelviewMatrix();
+                    var matrix = visitor.getCurrentModelViewMatrix();
                     Matrix.inverse( matrix, viewModel );
                     // Calculate distance from viewpoint
                     if ( this._rangeMode === Lod.DISTANCE_FROM_EYE_POINT ) {

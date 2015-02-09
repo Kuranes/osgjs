@@ -1,10 +1,22 @@
 define( [], function () {
 
+    'use strict';
+
     /** @class Vec2 Operations */
     var Vec2 = {
+        create: function () {
+            return [ 0.0, 0.0 ];
+        },
+
         copy: function ( a, r ) {
             r[ 0 ] = a[ 0 ];
             r[ 1 ] = a[ 1 ];
+            return r;
+        },
+
+        set: function ( a, b, r ) {
+            r[ 0 ] = a;
+            r[ 1 ] = b;
             return r;
         },
 

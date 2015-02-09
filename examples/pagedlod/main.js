@@ -24,12 +24,12 @@ var main = function () {
     var node = osg.createTexturedQuadGeometry( minExtent[ 0 ], minExtent[ 1 ], 0, maxExtent[ 0 ] - minExtent[ 0 ], 0, 0, 0, maxExtent[ 1 ] - minExtent[ 1 ], 0 );
 
     function createTileForGeometry( i, x, y, width, height ) {
-        
+
         var node = osg.createTexturedQuadGeometry( x, y, 0, width, 0, 0, 0, height, 0 );
         var materialGround = new osg.Material();
         materialGround.setAmbient( [ 1 * i / 8, 1 * i / 2 , 1 * i / 2, 1 ] );
         materialGround.setDiffuse( [ 0, 0, 0, 1 ] );
-        node.getOrCreateStateSet().setAttributeAndMode( materialGround );
+        node.getOrCreateStateSet().setAttributeAndModes( materialGround );
         return node;
     }
 
@@ -99,7 +99,7 @@ var main = function () {
             plod.setRangeMode( osg.PagedLOD.PIXEL_SIZE_ON_SCREEN );
             plod.addChild( node, 0, 100000 );
             plod.setFunction( 1, create );
-            plod.setRange( 1, 100000, Infinity );
+            plod.setRange( 1, 100000, Number.MAX_VALUE );
             plod.level = designation.sLevel;
             plod.x = designation.sRow;
             plod.y = designation.sCol;
@@ -117,11 +117,14 @@ var main = function () {
     plod.x = 0;
     plod.y = 0;
     plod.setFunction( 1, create );
-    plod.setRange( 1, 100000, Infinity );
+    plod.setRange( 1, 100000, Number.MAX_VALUE );
 
     // The viewer
     viewer = new osgViewer.Viewer( canvas , { 'enableFrustumCulling': true } );
     viewer.init();
+    viewer.getDatabasePager().setProgressCallback ( function ( a,b ) { 
+        progress( a + b );
+    });
     viewer.setSceneData( plod );
     var bs = plod.getBound();
     viewer.setupManipulator();

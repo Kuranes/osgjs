@@ -1,10 +1,16 @@
 define( [
+    'osg/Utils',
+
     'osg/Notify',
-    'osg/StateGraph',
-    'osg/Matrix'
-], function ( Notify, StateGraph, Matrix ) {
+    'osg/Object',
+    'osg/StateGraph'
+], function ( MACROUTILS, Notify, Object, StateGraph ) {
+
+    'use strict';
 
     var RenderBin = function () {
+        Object.call( this );
+
         this._leafs = [];
         this.positionedAttribute = [];
         this._renderStage = undefined;
@@ -14,11 +20,18 @@ define( [
         this._binNum = 0;
 
         this._sorted = false;
-        this._sortMode = RenderBin.SORT_BY_STATE;
+        this._sortMode = RenderBin.defaultSortMode;
 
+        this._drawCallback = undefined;
     };
+
     RenderBin.SORT_BY_STATE = 0;
     RenderBin.SORT_BACK_TO_FRONT = 1;
+    RenderBin.SORT_FRONT_TO_BACK = 2;
+
+    // change it at runtime for default RenderBin if needed
+    RenderBin.defaultSortMode = RenderBin.SORT_BY_STATE;
+
     RenderBin.BinPrototypes = {
         RenderBin: function () {
             return new RenderBin();
@@ -30,7 +43,7 @@ define( [
         }
     };
 
-    RenderBin.prototype = {
+    RenderBin.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInherit( Object.prototype, {
         _createRenderBin: function ( binName ) {
             if ( binName === undefined || RenderBin.BinPrototypes[ binName ] === undefined ) {
                 return RenderBin.BinPrototypes.RenderBin();
@@ -49,7 +62,7 @@ define( [
                 var leafs = this.stateGraphList[ i ].leafs;
                 for ( var j = 0, k = leafs.length; j < k; j++ ) {
                     var leaf = leafs[ j ];
-                    if ( isNaN( leaf.depth ) ) {
+                    if ( isNaN( leaf._depth ) ) {
                         detectedNaN = true;
                     } else {
                         this._leafs.push( leaf );
@@ -64,19 +77,39 @@ define( [
             this.stateGraphList.splice( 0, this.stateGraphList.length );
         },
 
+
         sortBackToFront: function () {
+
             this.copyLeavesFromStateGraphListToRenderLeafList();
+
             var cmp = function ( a, b ) {
-                return b.depth - a.depth;
+                return b._depth - a._depth;
             };
+
             this._leafs.sort( cmp );
         },
+
+
+        sortFrontToBack: function () {
+
+            this.copyLeavesFromStateGraphListToRenderLeafList();
+
+            var cmp = function ( a, b ) {
+                return a._depth - b._depth;
+            };
+
+            this._leafs.sort( cmp );
+        },
+
 
         sortImplementation: function () {
             var SortMode = RenderBin;
             switch ( this._sortMode ) {
             case SortMode.SORT_BACK_TO_FRONT:
                 this.sortBackToFront();
+                break;
+            case SortMode.SORT_FRONT_TO_BACK:
+                this.sortFrontToBack();
                 break;
             case SortMode.SORT_BY_STATE:
                 // do nothing
@@ -132,6 +165,21 @@ define( [
             this._leafs.length = 0;
             this._sorted = false;
         },
+
+
+        draw: function ( state, previousRenderLeaf ) {
+
+            var previousLeaf = previousRenderLeaf;
+            // use callback drawImplementation if exist
+            if ( this._drawCallback && this._drawCallback.drawImplementation ) {
+                previousLeaf = this._drawCallback.drawImplementation( this, state, previousLeaf );
+            } else {
+                previousLeaf = this.drawImplementation( state, previousLeaf );
+            }
+
+            return previousLeaf;
+        },
+
         applyPositionedAttribute: function ( state, positionedAttributes ) {
             // the idea is to set uniform 'globally' in uniform map.
             for ( var index = 0, l = positionedAttributes.length; index < l; index++ ) {
@@ -147,17 +195,22 @@ define( [
         },
 
         drawImplementation: function ( state, previousRenderLeaf ) {
-            var previous = previousRenderLeaf;
+
+            var previousLeaf = previousRenderLeaf;
             var binsKeys = window.Object.keys( this._bins );
             var bins = this._bins;
+
             var binsArray = [];
+
             for ( var i = 0, l = binsKeys.length; i < l; i++ ) {
                 var k = binsKeys[ i ];
                 binsArray.push( bins[ k ] );
             }
+
             var cmp = function ( a, b ) {
                 return a._binNum - b._binNum;
             };
+
             binsArray.sort( cmp );
 
             var current = 0;
@@ -170,156 +223,56 @@ define( [
                 if ( bin.getBinNumber() > 0 ) {
                     break;
                 }
-                previous = bin.drawImplementation( state, previous );
+                previousLeaf = bin.draw( state, previousLeaf );
             }
 
             // draw leafs
-            previous = this.drawLeafs( state, previous );
+            previousLeaf = this.drawLeafs( state, previousLeaf );
 
             // draw post bins
             for ( ; current < end; current++ ) {
                 bin = binsArray[ current ];
-                previous = bin.drawImplementation( state, previous );
+                previousLeaf = bin.draw( state, previousLeaf );
             }
-            return previous;
+            return previousLeaf;
         },
 
-        drawGeometry: ( function() {
-            var normal = Matrix.create();
-            var modelViewUniform, projectionUniform, normalUniform, program;
-
-            return function( state, leaf, push ) {
-
-                var gl = state.getGraphicContext();
-
-                if ( push === true ) {
-
-                    state.apply();
-                    program = state.getLastProgramApplied();
-
-                    modelViewUniform = program.uniformsCache[ state.modelViewMatrix.name ];
-                    projectionUniform = program.uniformsCache[ state.projectionMatrix.name ];
-                    normalUniform = program.uniformsCache[ state.normalMatrix.name ];
-                }
-
-
-                if ( modelViewUniform !== undefined ) {
-                    state.modelViewMatrix.set( leaf.modelview );
-                    state.modelViewMatrix.apply( gl, modelViewUniform );
-                }
-
-                if ( projectionUniform !== undefined ) {
-                    state.projectionMatrix.set( leaf.projection );
-                    state.projectionMatrix.apply( gl, projectionUniform );
-                }
-
-                if ( normalUniform !== undefined ) {
-                    Matrix.copy( leaf.modelview, normal );
-                    normal[ 12 ] = 0.0;
-                    normal[ 13 ] = 0.0;
-                    normal[ 14 ] = 0.0;
-
-                    Matrix.inverse( normal, normal );
-                    Matrix.transpose( normal, normal );
-                    state.normalMatrix.set( normal );
-                    state.normalMatrix.apply( gl, normalUniform );
-                }
-
-                leaf.geometry.drawImplementation( state );
-
-                if ( push === true ) {
-                    state.popGeneratedProgram();
-                    state.popStateSet();
-                }
-
-            };
-        })(),
 
         drawLeafs: function ( state, previousRenderLeaf ) {
+
             var stateList = this.stateGraphList;
             var leafs = this._leafs;
             var previousLeaf = previousRenderLeaf;
+            var leaf;
 
             if ( previousLeaf ) {
-                StateGraph.prototype.moveToRootStateGraph( state, previousRenderLeaf.parent );
+                StateGraph.prototype.moveToRootStateGraph( state, previousLeaf._parent );
             }
-
-            var leaf, push;
-            var prevRenderGraph, prevRenderGraphParent, rg;
 
             // draw fine grained ordering.
             for ( var d = 0, dl = leafs.length; d < dl; d++ ) {
                 leaf = leafs[ d ];
-                push = false;
-                if ( previousLeaf !== undefined ) {
-
-                    // apply state if required.
-                    prevRenderGraph = previousLeaf.parent;
-                    prevRenderGraphParent = prevRenderGraph.parent;
-                    rg = leaf.parent;
-                    if ( prevRenderGraphParent !== rg.parent ) {
-                        rg.moveStateGraph( state, prevRenderGraphParent, rg.parent );
-
-                        // send state changes and matrix changes to OpenGL.
-                        state.pushStateSet( rg.stateset );
-                        push = true;
-                    } else if ( rg !== prevRenderGraph ) {
-                        // send state changes and matrix changes to OpenGL.
-                        state.pushStateSet( rg.stateset );
-                        push = true;
-                    }
-
-                } else {
-                    leaf.parent.moveStateGraph( state, undefined, leaf.parent.parent );
-                    state.pushStateSet( leaf.parent.stateset );
-                    push = true;
-                }
-
-                this.drawGeometry( state, leaf, push );
-
+                leaf.render( state, previousLeaf );
                 previousLeaf = leaf;
             }
 
 
             // draw coarse grained ordering.
             for ( var i = 0, l = stateList.length; i < l; i++ ) {
+
                 var sg = stateList[ i ];
+
                 for ( var j = 0, ll = sg.leafs.length; j < ll; j++ ) {
 
                     leaf = sg.leafs[ j ];
-                    push = false;
-                    if ( previousLeaf !== undefined ) {
-
-                        // apply state if required.
-                        prevRenderGraph = previousLeaf.parent;
-                        prevRenderGraphParent = prevRenderGraph.parent;
-                        rg = leaf.parent;
-                        if ( prevRenderGraphParent !== rg.parent ) {
-                            rg.moveStateGraph( state, prevRenderGraphParent, rg.parent );
-
-                            // send state changes and matrix changes to OpenGL.
-                            state.pushStateSet( rg.stateset );
-                            push = true;
-                        } else if ( rg !== prevRenderGraph ) {
-                            // send state changes and matrix changes to OpenGL.
-                            state.pushStateSet( rg.stateset );
-                            push = true;
-                        }
-
-                    } else {
-                        leaf.parent.moveStateGraph( state, undefined, leaf.parent.parent );
-                        state.pushStateSet( leaf.parent.stateset );
-                        push = true;
-                    }
-
-                    this.drawGeometry( state, leaf, push );
-
+                    leaf.render( state, previousLeaf );
                     previousLeaf = leaf;
+
                 }
             }
             return previousLeaf;
         }
-    };
+    } ), 'osg', 'RenderBin' );
 
     return RenderBin;
 } );

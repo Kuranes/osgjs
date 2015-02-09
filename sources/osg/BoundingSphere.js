@@ -1,17 +1,20 @@
 define( [
-    'osg/Vec3',
-    'osg/BoundingBox'
-], function ( Vec3, BoundingBox ) {
+    'osg/BoundingBox',
+    'osg/Notify',
+    'osg/Vec3'
+], function ( BoundingBox, Notify, Vec3 ) {
+
+    'use strict';
 
     var BoundingSphere = function () {
-        this._center = [ 0.0, 0.0, 0.0 ];
-        this._radius = -1;
+        this._center = Vec3.create();
+        this._radius = -1.0;
     };
 
     BoundingSphere.prototype = {
         init: function () {
             Vec3.init( this._center );
-            this._radius = -1;
+            this._radius = -1.0;
         },
         valid: function () {
             return this._radius >= 0.0;
@@ -30,8 +33,8 @@ define( [
             return this._radius * this._radius;
         },
 
-        expandByBox: ( function () {
-            var v = [ 0.0, 0.0, 0.0 ];
+        expandByBoundingBox: ( function () {
+            var v = Vec3.create();
             var newbb = new BoundingBox();
             return function ( bb ) {
                 if ( !bb.valid() )
@@ -55,16 +58,16 @@ define( [
                         v[ 0 ] += this._center[ 0 ]; // move to absolute position.
                         v[ 1 ] += this._center[ 1 ]; // move to absolute position.
                         v[ 2 ] += this._center[ 2 ]; // move to absolute position.
-                        newbb.expandBy( v ); // add it into the new bounding box.
+                        newbb.expandByVec3( v ); // add it into the new bounding box.
                     }
 
-                    c = newbb.center();
+                    c = newbb.center( v );
                     this._center[ 0 ] = c[ 0 ];
                     this._center[ 1 ] = c[ 1 ];
                     this._center[ 2 ] = c[ 2 ];
                     this._radius = newbb.radius();
                 } else {
-                    c = bb.center();
+                    c = bb.center( v );
                     this._center[ 0 ] = c[ 0 ];
                     this._center[ 1 ] = c[ 1 ];
                     this._center[ 2 ] = c[ 2 ];
@@ -73,11 +76,16 @@ define( [
             };
         } )(),
 
+        expandByBox: function ( bb ) {
+            Notify.log( 'BoundingSphere.expandByBox is deprecated, use instead BoundingSphere.expandByBoundingBox' );
+            return this.expandByBoundingBox( bb );
+        },
+
         expandByVec3: ( function () {
             var dv = [ 0.0, 0.0, 0.0 ];
             return function ( v ) {
                 if ( this.valid() ) {
-                    Vec3.sub( v, this.center(), dv );
+                    Vec3.sub( v, this.center( dv ), dv );
                     var r = Vec3.length( dv );
                     if ( r > this.radius() ) {
                         var dr = ( r - this.radius() ) * 0.5;
@@ -109,7 +117,13 @@ define( [
                 }
             }
         },
-        expandBy: function ( sh ) {
+
+        expandBy: function ( bs ) {
+            Notify.log( 'BoundingSphere.expandBy is deprecated, use instead BoundingSphere.expandByBoundingSphere' );
+            this.expandByBoundingSphere( bs );
+        },
+
+        expandByBoundingSphere: function ( sh ) {
             // ignore operation if incomming BoundingSphere is invalid.
             if ( !sh.valid() ) {
                 return;

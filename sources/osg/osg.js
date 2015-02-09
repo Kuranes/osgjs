@@ -5,8 +5,11 @@ define( [
     'osg/BoundingSphere',
     'osg/BufferArray',
     'osg/Camera',
+    'osg/ColorMask',
+    'osg/ComputeBoundsVisitor',
     'osg/ComputeMatrixFromNodePath',
     'osg/CullFace',
+    'osg/CullingSet',
     'osg/CullSettings',
     'osg/CullStack',
     'osg/CullVisitor',
@@ -35,14 +38,17 @@ define( [
     'osg/Notify',
     'osg/Object',
     'osg/PagedLOD',
+    'osg/Polytope',
+    'osg/Plane',
+    'osg/PrimitiveFunctor',
     'osg/PrimitiveSet',
     'osg/Program',
     'osg/Projection',
     'osg/Quat',
     'osg/RenderBin',
+    'osg/RenderLeaf',
     'osg/RenderStage',
     'osg/Shader',
-    'osg/ShaderGenerator',
     'osg/Shape',
     'osg/Stack',
     'osg/State',
@@ -64,7 +70,79 @@ define( [
     'osg/TransformEnums',
     'osg/WebGLCaps'
 
-], function( BlendColor, BlendFunc, BoundingBox, BoundingSphere, BufferArray, Camera, ComputeMatrixFromNodePath, CullFace, CullSettings, CullStack, CullVisitor, Depth, DrawArrayLengths, DrawArrays, DrawElements, EllipsoidModel, FrameBufferObject, FrameStamp, Geometry, Image, KdTree, KdTreeBuilder, Light, LightSource, LineWidth, Lod, Map, Material, Math, Matrix, MatrixTransform, Node, NodeVisitor, Notify, Object, PagedLOD, PrimitiveSet, Program, Projection, Quat, RenderBin, RenderStage, Shader, ShaderGenerator, Shape, Stack, State, StateAttribute, StateGraph, StateSet, Texture, TextureCubeMap, Transform, TriangleIndexFunctor, Uniform, UpdateVisitor, MACROUTILS, Vec2, Vec3, Vec4, Viewport, osgPool, TransformEnums, WebGLCaps ) {
+], function (
+    BlendColor,
+    BlendFunc,
+    BoundingBox,
+    BoundingSphere,
+    BufferArray,
+    Camera,
+    ColorMask,
+    ComputeBoundsVisitor,
+    ComputeMatrixFromNodePath,
+    CullFace,
+    CullingSet,
+    CullSettings,
+    CullStack,
+    CullVisitor,
+    Depth,
+    DrawArrayLengths,
+    DrawArrays,
+    DrawElements,
+    EllipsoidModel,
+    FrameBufferObject,
+    FrameStamp,
+    Geometry,
+    Image,
+    KdTree,
+    KdTreeBuilder,
+    Light,
+    LightSource,
+    LineWidth,
+    Lod,
+    Map,
+    Material,
+    Math,
+    Matrix,
+    MatrixTransform,
+    Node,
+    NodeVisitor,
+    Notify,
+    Object,
+    PagedLOD,
+    Polytope,
+    Plane,
+    PrimitiveFunctor,
+    PrimitiveSet,
+    Program,
+    Projection,
+    Quat,
+    RenderBin,
+    RenderLeaf,
+    RenderStage,
+    Shader,
+    Shape,
+    Stack,
+    State,
+    StateAttribute,
+    StateGraph,
+    StateSet,
+    Texture,
+    TextureCubeMap,
+    Transform,
+    TriangleIndexFunctor,
+    Uniform,
+    UpdateVisitor,
+    MACROUTILS,
+    Vec2,
+    Vec3,
+    Vec4,
+    Viewport,
+    osgPool,
+    TransformEnums,
+    WebGLCaps ) {
+
+    'use strict';
 
     var osg = {};
 
@@ -73,9 +151,13 @@ define( [
     osg.BoundingBox = BoundingBox;
     osg.BoundingSphere = BoundingSphere;
     osg.BufferArray = BufferArray;
+    osg.ColorMask = ColorMask;
     osg.Camera = Camera;
+    osg.ColorMask = ColorMask;
+    osg.ComputeBoundsVisitor = ComputeBoundsVisitor;
     MACROUTILS.objectMix( osg, ComputeMatrixFromNodePath );
     osg.CullFace = CullFace;
+    osg.CullingSet = CullingSet;
     osg.CullSettings = CullSettings;
     osg.CullStack = CullStack;
     osg.CullVisitor = CullVisitor;
@@ -106,15 +188,17 @@ define( [
     MACROUTILS.objectMix( osg, Notify );
     osg.Object = Object;
     osg.PagedLOD = PagedLOD;
+    osg.Plane = Plane;
+    osg.Polytope = Polytope;
     osg.PrimitiveSet = PrimitiveSet;
+    osg.PrimitiveFunctor = PrimitiveFunctor;
     osg.Program = Program;
     osg.Projection = Projection;
     osg.Quat = Quat;
     osg.RenderBin = RenderBin;
+    osg.RenderLeaf = RenderLeaf;
     osg.RenderStage = RenderStage;
     osg.Shader = Shader;
-    osg.ShaderGenerator = ShaderGenerator;
-    osg.ShaderGeneratorType = ShaderGenerator.Type;
     MACROUTILS.objectMix( osg, Shape );
     osg.Stack = Stack;
     osg.State = State;

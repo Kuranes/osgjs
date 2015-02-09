@@ -1,61 +1,23 @@
 define( [
     'osg/Notify',
-    'osg/Utils',
-    'osg/UpdateVisitor',
-    'osg/CullVisitor',
-    'osgUtil/osgUtil',
-    'osgViewer/View',
-    'osg/RenderStage',
-    'osg/StateGraph',
     'osg/Matrix',
-    'osg/State',
+    'osg/Options',
+    'osg/Stats',
+    'osg/Timer',
+    'osg/UpdateVisitor',
+    'osg/Utils',
+
     'osgGA/OrbitManipulator',
+
+    'osgViewer/CanvasStats',
     'osgViewer/eventProxy/EventProxy',
+    'osgViewer/View',
     'osgViewer/webgl-utils',
-    'osgViewer/webgl-debug',
-    'osgViewer/stats'
-], function ( Notify, MACROUTILS, UpdateVisitor, CullVisitor, osgUtil, View, RenderStage, StateGraph, Matrix, State, OrbitManipulator, EventProxy, WebGLUtils, WebGLDebugUtils, Stats ) {
+    'osgViewer/webgl-debug'
 
+], function ( Notify, Matrix, Options, Stats, Timer, UpdateVisitor, MACROUTILS, OrbitManipulator, CanvasStats, EventProxy, View, WebGLUtils, WebGLDebugUtils ) {
 
-    var OptionsDefault = {
-        'antialias': true,
-        'useDevicePixelRatio': true,
-        'fullscreen': true,
-        'enableFrustumCulling': false
-    };
-
-
-    var Options = function( defaults ) {
-
-        Object.keys( defaults ).forEach( function ( key ) {
-            this[ key ] = defaults[ key ];
-        }.bind( this ) );
-
-    };
-
-    Options.prototype = {
-        get: function( key ) {
-            return this[key];
-        },
-        getBoolean: function ( key ) {
-            var val = this.getString( key );
-            if ( val ) return Boolean( JSON.parse(val) );
-            return undefined;
-        },
-
-        getNumber: function ( key ) {
-            var val = this[ key ];
-            if ( val ) return Number( JSON.parse(val));
-            return undefined;
-        },
-
-        getString: function ( key ) {
-            var val = this[ key ];
-            if ( val ) return this[ key ].toString();
-            return undefined;
-        }
-
-    };
+    'use strict';
 
     var OptionsURL = ( function () {
         var options = {};
@@ -131,56 +93,44 @@ define( [
         return options;
     } )();
 
+
     var Viewer = function ( canvas, userOptions, error ) {
         View.call( this );
 
-        // use default options
-        var options = new Options( OptionsDefault );
-        if ( userOptions ) {
-            // user options override by user options
-            MACROUTILS.objectMix( options, userOptions );
-        }
-        // if url options override url options
-        MACROUTILS.objectMix( options, OptionsURL );
+        this._startFrameTick = undefined;
+        this._startTick = Timer.instance().tick();
+        this._stats = new Stats( 'Viewer' );
+        this._canvasStats = undefined;
+        this._done = false;
 
-        this._options = options;
+        var options = this.initOptions( userOptions );
+        var gl = this.initWebGLContext( canvas, options, error );
 
-        // #FIXME see tojiro's blog for webgl lost context stuffs
-        if ( options.get( 'SimulateWebGLLostContext') ) {
-            canvas = WebGLDebugUtils.makeLostContextSimulatingCanvas( canvas );
-            canvas.loseContextInNCalls( options.get( 'SimulateWebGLLostContext' ) );
-        }
+        if ( !gl )
+            throw 'No WebGL implementation found';
 
-        var gl = WebGLUtils.setupWebGL( canvas, options, error );
-        var self = this;
-        canvas.addEventListener( 'webglcontextlost', function ( event ) {
-            self.contextLost();
-            event.preventDefault();
-        }, false );
+        // this MACROUTILS.init(); should be removed and replace by something
+        // more natural
+        MACROUTILS.init();
 
-        canvas.addEventListener( 'webglcontextrestored', function () {
-            self.contextRestored();
-        }, false );
+        this.initDeviceEvents( options, canvas );
+        this.initStats( options, canvas );
+
+        this._updateVisitor = new UpdateVisitor();
+
+        this.setUpView( gl.canvas, options );
+    };
 
 
-        if ( Notify.reportWebGLError || options.get( 'reportWebGLError') ) {
-            gl = WebGLDebugUtils.makeDebugContext( gl );
-        }
+    Viewer.prototype = MACROUTILS.objectInherit( View.prototype, {
 
-        if ( gl ) {
-            this.setGraphicContext( gl );
-            this.initWebGLCaps( gl );
-
-            MACROUTILS.init();
-            this._frameRate = 60.0;
-            osgUtil.UpdateVisitor = UpdateVisitor;
-            osgUtil.CullVisitor = CullVisitor;
+        initDeviceEvents: function ( options, canvas ) {
 
             // default argument for mouse binding
             var defaultMouseEventNode = options.mouseEventNode || canvas;
 
             var eventsBackend = options.EventBackend || {};
-            if ( !options.EventBackend )  options.EventBackend = eventsBackend;
+            if ( !options.EventBackend ) options.EventBackend = eventsBackend;
             eventsBackend.StandardMouseKeyboard = options.EventBackend.StandardMouseKeyboard || {};
             var mouseEventNode = eventsBackend.StandardMouseKeyboard.mouseEventNode || defaultMouseEventNode;
             eventsBackend.StandardMouseKeyboard.mouseEventNode = mouseEventNode;
@@ -193,14 +143,58 @@ define( [
             // gamepade
             eventsBackend.GamePad = eventsBackend.GamePad || {};
 
-            this.setUpView( gl.canvas );
-        } else {
-            throw 'No WebGL implementation found';
-        }
-    };
+            this._eventProxy = this.initEventProxy( options );
+        },
+
+        initOptions: function ( userOptions ) {
+            // use default options
+            var options = new Options();
+
+            if ( userOptions ) {
+                // user options override by user options
+                options.extend( userOptions );
+            }
+
+            // if url options override url options
+            options.extend( OptionsURL );
 
 
-    Viewer.prototype = MACROUTILS.objectInehrit( View.prototype, {
+            // Check if Frustum culling is enabled to calculate the clip planes
+            if ( options.getBoolean( 'enableFrustumCulling' ) === true )
+                this.getCamera().getRenderer().getCullVisitor().setEnableFrustumCulling( true );
+
+
+            return options;
+        },
+
+        initWebGLContext: function ( canvas, options, error ) {
+
+            // #FIXME see tojiro's blog for webgl lost context stuffs
+            if ( options.get( 'SimulateWebGLLostContext' ) ) {
+                canvas = WebGLDebugUtils.makeLostContextSimulatingCanvas( canvas );
+                canvas.loseContextInNCalls( options.get( 'SimulateWebGLLostContext' ) );
+            }
+
+            var gl = WebGLUtils.setupWebGL( canvas, options, error );
+
+            canvas.addEventListener( 'webglcontextlost', function ( event ) {
+                this.contextLost();
+                event.preventDefault();
+            }.bind( this ), false );
+
+            canvas.addEventListener( 'webglcontextrestored', function () {
+                this.contextRestored();
+            }.bind( this ), false );
+
+            if ( Notify.reportWebGLError || options.get( 'reportWebGLError' ) ) {
+                gl = WebGLDebugUtils.makeDebugContext( gl );
+            }
+
+            this.initWebGLCaps( gl );
+            this.setGraphicContext( gl );
+
+            return gl;
+        },
 
         contextLost: function () {
             Notify.log( 'webgl context lost' );
@@ -211,44 +205,20 @@ define( [
         },
 
         init: function () {
-            this._done = false;
-            this._state = new State();
-
-            var gl = this.getGraphicContext();
-            this._state.setGraphicContext( gl );
-            gl.pixelStorei( gl.UNPACK_FLIP_Y_WEBGL, true );
-
-            this._updateVisitor = new osgUtil.UpdateVisitor();
-            this._cullVisitor = new osgUtil.CullVisitor();
-            // It should be done in RenderStage
-            this._cullVisitor.setCamera( this.getCamera() );
-            this._renderStage = new RenderStage();
-            this._stateGraph = new StateGraph();
-
-            this.parseOptions();
-
-            this.getCamera().setClearColor( [ 0.0, 0.0, 0.0, 0.0 ] );
-            this._eventProxy = this.initEventProxy( this._options );
+            //this._done = false;
         },
+
         getState: function () {
-            // would have more sense to be in view
-            // but I would need to put cull and draw on lower Object
-            // in View or a new Renderer object
-            return this._state;
+            return this.getCamera().getRenderer().getState();
         },
 
-        parseOptions: function () {
+        initStats: function ( options, canvas ) {
 
-            if ( this._options.stats ) {
-                this.initStats( this._options );
-            }
+            if ( !options.getBoolean( 'stats' ) )
+                return;
 
-        },
-
-        initStats: function ( options ) {
-
-            var maxMS = 35;
-            var stepMS = 5;
+            var maxMS = 20;
+            var stepMS = 2;
             //var fontsize = 14;
 
             if ( options.statsMaxMS !== undefined ) {
@@ -259,31 +229,43 @@ define( [
             }
 
             var createDomElements = function ( elementToAppend ) {
-                var dom = [
-                    '<div id="StatsDiv" style="top: 0; position: absolute; width: 300px; height: 150px; z-index: 10;">',
+                var id = Math.floor( Math.random() * 1000 );
 
-                    '<div id="StatsCanvasDiv" style="position: relative;">',
-                    '<canvas id="StatsCanvasGrid" width="300" height="150" style="z-index:-1; position: absolute; background: rgba(14,14,14,0.8); " ></canvas>',
-                    '<canvas id="StatsCanvas" width="300" height="150" style="z-index:8; position: absolute;" ></canvas>',
-                    '<canvas id="StatsCanvasText" width="300" height="150" style="z-index:9; position: absolute;" ></canvas>',
+                var gridID = 'StatsCanvasGrid' + id.toString();
+                var statsCanvasID = 'StatsCanvas' + id.toString();
+                var statsCanvasTextID = 'StatsCanvasText' + id.toString();
+
+                var dom = [
+                    '<div style="top: 0; position: absolute; width: 300px; height: 150px; z-index: 10;">',
+                    '<div style="position: relative;">',
+                    options.getBoolean( 'statsNoGraph' ) ? '' : '<canvas id="' + gridID + '" width="300" height="150" style="z-index:-1; position: absolute; background: rgba(14,14,14,0.8); " ></canvas>',
+                    options.getBoolean( 'statsNoGraph' ) ? '' : '<canvas id="' + statsCanvasID + '" width="300" height="150" style="z-index:8; position: absolute;" ></canvas>',
+                    '<canvas id="' + statsCanvasTextID + '" width="300" height="150" style="z-index:9; position: absolute;" ></canvas>',
                     '</div>',
 
                     '</div>'
                 ].join( '\n' );
+
+
                 var parent;
+
                 if ( elementToAppend === undefined ) {
                     parent = document.body;
-                    //elementToAppend = 'body';
                 } else {
-                    parent = document.getElementById( elementToAppend );
+                    parent = elementToAppend;
                 }
 
-                //jQuery(dom).appendTo(elementToAppend);
                 var mydiv = document.createElement( 'div' );
                 mydiv.innerHTML = dom;
                 parent.appendChild( mydiv );
 
-                var grid = document.getElementById( 'StatsCanvasGrid' );
+                if ( options.getBoolean( 'statsNoGraph' ) ) {
+                    return {
+                        text: document.getElementById( statsCanvasTextID )
+                    };
+                }
+
+                var grid = document.getElementById( gridID );
                 var ctx = grid.getContext( '2d' );
                 ctx.clearRect( 0, 0, grid.width, grid.height );
 
@@ -297,217 +279,222 @@ define( [
                     ctx.stroke();
                 }
 
-
                 return {
-                    graph: document.getElementById( 'StatsCanvas' ),
-                    text: document.getElementById( 'StatsCanvasText' )
+                    graph: document.getElementById( statsCanvasID ),
+                    text: document.getElementById( statsCanvasTextID )
                 };
             };
 
-            if ( this._canvasStats === undefined || this._canvasStats === null ) {
-                var domStats = createDomElements();
-                this._canvasStats = domStats.graph;
-                this._canvasStatsText = domStats.text;
+            var elementToAttach = canvas.parentNode;
+            var domStats = createDomElements( elementToAttach );
+            var canvasStats = new CanvasStats( domStats.graph, domStats.text );
+
+            canvasStats.addLayer( '#ff0fff', 65,
+                function ( /*t*/) {
+                    var fn = this.getFrameStamp().getFrameNumber() - 1;
+                    var value = this.getViewerStats().getAveragedAttribute( fn - 25, fn, 'Frame rate' );
+                    return value;
+                }.bind( this ),
+                function ( a ) {
+                    return 'FrameRate: ' + ( a ).toFixed( 0 ) + ' fps';
+                } );
+
+            canvasStats.addLayer( '#ffff00', maxMS,
+                function ( /*t*/) {
+                    var fn = this.getFrameStamp().getFrameNumber() - 1;
+                    var value = this.getViewerStats().getAttribute( fn, 'Frame duration' );
+                    return value * 1000.0;
+                }.bind( this ),
+                function ( a ) {
+                    return 'FrameTime: ' + a.toFixed( 2 ) + ' ms';
+                } );
+
+            canvasStats.addLayer( '#d07b1f', maxMS,
+                function ( /*t*/) {
+                    var fn = this.getFrameStamp().getFrameNumber() - 1;
+                    var value = this.getViewerStats().getAttribute( fn, 'Update duration' );
+                    return value * 1000.0;
+                }.bind( this ),
+                function ( a ) {
+                    return 'UpdateTime: ' + a.toFixed( 2 ) + ' ms';
+                } );
+
+            canvasStats.addLayer( '#73e0ff', maxMS,
+                function ( /*t*/) {
+                    var fn = this.getFrameStamp().getFrameNumber() - 1;
+                    var value = this.getViewerStats().getAttribute( fn, 'Cull duration' );
+                    return value * 1000.0;
+                }.bind( this ),
+                function ( a ) {
+                    return 'CullTime: ' + a.toFixed( 2 ) + ' ms';
+                } );
+
+            canvasStats.addLayer( '#ff0000', maxMS,
+                function ( /*t*/) {
+                    var fn = this.getFrameStamp().getFrameNumber() - 1;
+                    var value = this.getViewerStats().getAttribute( fn, 'Draw duration' );
+                    return value * 1000.0;
+                }.bind( this ),
+                function ( a ) {
+                    return 'DrawTime: ' + a.toFixed( 2 ) + ' ms';
+                } );
+
+            canvasStats.addLayer( '#f0f000', 256,
+                function ( /*t*/) {
+                    var fn = this.getFrameStamp().getFrameNumber() - 1;
+                    var stats = this.getCamera().getRenderer().getState().getTextureManager().getStats();
+                    var value = stats.getAttribute( fn, 'Texture used' );
+                    return value / ( 1024 * 1024 );
+                }.bind( this ),
+                function ( a ) {
+                    return 'Texture used: ' + a.toFixed( 2 ) + ' MB';
+                } );
+
+            canvasStats.addLayer( '#f00f00', 256,
+                function ( /*t*/) {
+                    var fn = this.getFrameStamp().getFrameNumber() - 1;
+                    var stats = this.getCamera().getRenderer().getState().getTextureManager().getStats();
+                    var value = stats.getAttribute( fn, 'Texture total' );
+                    return value / ( 1024 * 1024 );
+                }.bind( this ),
+                function ( a ) {
+                    return 'Texture total: ' + a.toFixed( 2 ) + ' MB';
+                } );
+
+            if ( window.performance && window.performance.memory && window.performance.memory.totalJSHeapSize ) {
+                canvasStats.addLayer( '#00ff00',
+                    window.performance.memory.totalJSHeapSize,
+                    function ( /*t*/) {
+                        var fn = this.getFrameStamp().getFrameNumber() - 1;
+                        var value = this.getViewerStats().getAttribute( fn, 'Heap size' );
+                        return value;
+                    }.bind( this ),
+                    function ( a ) {
+                        var v = a / ( 1024 * 1024 );
+                        return 'Memory : ' + v.toFixed( 2 ) + ' Mb';
+                    } );
             }
-            this._stats = new Stats.Stats( this._canvasStats, this._canvasStatsText );
-            var that = this;
-            this._frameRate = 1;
-            this._frameTime = 0;
-            this._updateTime = 0;
-            this._cullTime = 0;
-            this._drawTime = 0;
-            this._stats.addLayer( '#ff0fff', 120,
-                                  function ( /*t*/ ) {
-                                      return ( 1000.0 / that._frameRate );
-                                  },
-                                  function ( a ) {
-                                      return 'FrameRate: ' + ( a ).toFixed( 0 ) + ' fps';
-                                  } );
-
-            this._stats.addLayer( '#ffff00', maxMS,
-                                  function ( /*t*/ ) {
-                                      return that._frameTime;
-                                  },
-                                  function ( a ) {
-                                      return 'FrameTime: ' + a.toFixed( 2 ) + ' ms';
-                                  } );
-
-            this._stats.addLayer( '#d07b1f', maxMS,
-                                  function ( /*t*/ ) {
-                                      return that._updateTime;
-                                  },
-                                  function ( a ) {
-                                      return 'UpdateTime: ' + a.toFixed( 2 ) + ' ms';
-                                  } );
-
-            this._stats.addLayer( '#73e0ff', maxMS,
-                                  function ( /*t*/ ) {
-                                      return that._cullTime;
-                                  },
-                                  function ( a ) {
-                                      return 'CullTime: ' + a.toFixed( 2 ) + ' ms';
-                                  } );
-
-            this._stats.addLayer( '#ff0000',
-                                  maxMS,
-                                  function ( /*t*/ ) {
-                                      return that._drawTime;
-                                  },
-                                  function ( a ) {
-                                      return 'DrawTime: ' + a.toFixed( 2 ) + ' ms';
-                                  } );
-
-            if ( window.performance && window.performance.memory && window.performance.memory.totalJSHeapSize )
-                this._stats.addLayer( '#00ff00',
-                                      window.performance.memory.totalJSHeapSize * 2,
-                                      function ( /*t*/ ) {
-                                          return that._memSize;
-                                      },
-                                      function ( a ) {
-                                          return 'Memory : ' + a.toFixed( 0 ) + ' b';
-                                      } );
+            this._canvasStats = canvasStats;
 
         },
 
-        update: function () {
-            this.getScene().accept( this._updateVisitor );
-        },
-        cull: function () {
-            // this part of code should be called for each view
-            // right now, we dont support multi view
-            this._stateGraph.clean();
-            this._renderStage.reset();
-
-            this._cullVisitor.reset();
-            this._cullVisitor.setStateGraph( this._stateGraph );
-            this._cullVisitor.setRenderStage( this._renderStage );
-            var camera = this.getCamera();
-            this._cullVisitor.pushStateSet( camera.getStateSet() );
-            this._cullVisitor.pushProjectionMatrix( camera.getProjectionMatrix() );
-
-            // update bound
-            camera.getBound();
-
-            var identity = Matrix.create();
-            this._cullVisitor.pushModelviewMatrix( identity );
-            switch ( this.getLightingMode() )
-            {
-                case View.LightingMode.HEADLIGHT:
-                    if ( this._light ) {
-                        this._cullVisitor.addPositionedAttribute( this._light );
-                    }
-                    break;
-                case View.LightingMode.SKY_LIGHT:
-                    if ( this._light ) {
-                        this._cullVisitor.addPositionedAttribute( this._light, camera.getViewMatrix() );
-                    }
-                    break;
-                default:
-                    break;
-            }
-            this._cullVisitor.pushModelviewMatrix( camera.getViewMatrix() );
-            this._cullVisitor.pushViewport( camera.getViewport() );
-            this._cullVisitor.setCullSettings( camera );
-
-            this._renderStage.setClearDepth( camera.getClearDepth() );
-            this._renderStage.setClearColor( camera.getClearColor() );
-            this._renderStage.setClearMask( camera.getClearMask() );
-            this._renderStage.setViewport( camera.getViewport() );
-
-            // Check if Frustum culling is enabled to calculate the clip planes
-            if ( this._options.getBoolean( 'enableFrustumCulling' ) === true ){
-                this._cullVisitor.setEnableFrustumCulling ( true );
-                var mvp = Matrix.create();
-                Matrix.mult( camera.getProjectionMatrix(), camera.getViewMatrix(), mvp );
-                this._cullVisitor.getFrustumPlanes( mvp, this._cullVisitor._frustum );
-            }
-            //CullVisitor.prototype.handleCullCallbacksAndTraverse.call(this._cullVisitor,camera);
-            this.getScene().accept( this._cullVisitor );
-
-            // fix projection matrix if camera has near/far auto compute
-            this._cullVisitor.popModelviewMatrix();
-            this._cullVisitor.popProjectionMatrix();
-            this._cullVisitor.popViewport();
-            this._cullVisitor.popStateSet();
-
-            this._renderStage.sort();
-        },
-        draw: function () {
-            var state = this.getState();
-            this._renderStage.draw( state );
-
-            // noticed that we accumulate lot of stack, maybe because of the stateGraph
-            state.popAllStateSets();
-            state.applyWithoutProgram(); //state.apply(); // apply default state (global)
+        getViewerStats: function () {
+            return this._stats;
         },
 
-        frame: function () {
+        renderingTraversal: function () {
 
-            this.updateViewport();
+            var frameNumber = this.getFrameStamp().getFrameNumber();
 
-            var frameTime, beginFrameTime;
-            frameTime = MACROUTILS.performance.now();
-            if ( this._lastFrameTime === undefined ) {
-                this._lastFrameTime = 0;
+            if ( this.getScene().getSceneData() )
+                this.getScene().getSceneData().getBound();
+
+            if ( this.getCamera() ) {
+
+                var tick0 = Timer.instance().tick();
+                this.getCamera().getRenderer().cull();
+
+                var tick1 = Timer.instance().tick();
+                this.getViewerStats().setAttribute( frameNumber, 'Cull duration', Timer.instance().deltaS( tick0, tick1 ) );
+
+                this.getCamera().getRenderer().draw();
+
+                var tick2 = Timer.instance().tick();
+                this.getViewerStats().setAttribute( frameNumber, 'Draw duration', Timer.instance().deltaS( tick1, tick2 ) );
             }
-            this._frameRate = frameTime - this._lastFrameTime;
-            this._lastFrameTime = frameTime;
-            beginFrameTime = frameTime;
+        },
 
-            var frameStamp = this.getFrameStamp();
 
-            if ( frameStamp.getFrameNumber() === 0 ) {
-                frameStamp.setReferenceTime( frameTime / 1000.0 );
-                this._numberFrame = 0;
-            }
+        updateTraversal: function () {
 
-            frameStamp.setSimulationTime( frameTime / 1000.0 - frameStamp.getReferenceTime() );
+            var startTraversal = Timer.instance().tick();
 
             // setup framestamp
-            this._updateVisitor.setFrameStamp( frameStamp );
-            this._cullVisitor.setFrameStamp( frameStamp );
+            this._updateVisitor.setFrameStamp( this.getFrameStamp() );
 
-            // update inputs devices
-            this.updateEventProxy( this._eventProxy, frameStamp );
 
             // Update Manipulator/Event
-            // should be merged with the update of game pad below
             if ( this.getManipulator() ) {
                 this.getManipulator().update( this._updateVisitor );
                 Matrix.copy( this.getManipulator().getInverseMatrix(), this.getCamera().getViewMatrix() );
             }
 
-            if ( this._stats === undefined ) {
-                // time the update
-                this.update();
-                this.cull();
-                this.draw();
-                frameStamp.setFrameNumber( frameStamp.getFrameNumber() + 1 );
-                this._numberFrame++;
-                this._frameTime = MACROUTILS.performance.now() - beginFrameTime;
-            } else {
-                this._updateTime = MACROUTILS.performance.now();
-                this.update();
-                this._updateTime = MACROUTILS.performance.now() - this._updateTime;
+            // update the scene
+            this.getScene().updateSceneGraph( this._updateVisitor );
+            // Remove ExpiredSubgraphs from DatabasePager
+            this.getDatabasePager().releaseGLExpiredSubgraphs( this.getGraphicContext(), 0.005 );
+            // In OSG this.is deferred until the draw traversal, to handle multiple contexts
+            this.flushDeletedGLObjects( 0.005 );
+            var deltaS = Timer.instance().deltaS( startTraversal, Timer.instance().tick() );
 
+            this.getViewerStats().setAttribute( this.getFrameStamp().getFrameNumber(), 'Update duration', deltaS );
+        },
 
-                this._cullTime = MACROUTILS.performance.now();
-                this.cull();
-                this._cullTime = MACROUTILS.performance.now() - this._cullTime;
+        advance: function ( simulationTime ) {
 
-                this._drawTime = MACROUTILS.performance.now();
-                this.draw();
-                this._drawTime = MACROUTILS.performance.now() - this._drawTime;
+            var sTime = simulationTime;
 
-                frameStamp.setFrameNumber( frameStamp.getFrameNumber() + 1 );
+            if ( sTime === undefined )
+                sTime = Number.MAX_VALUE;
 
-                this._numberFrame++;
-                this._frameTime = MACROUTILS.performance.now() - beginFrameTime;
+            var frameStamp = this._frameStamp;
+            var previousReferenceTime = frameStamp.getReferenceTime();
+            var previousFrameNumber = frameStamp.getFrameNumber();
 
-                if ( window.performance && window.performance.memory && window.performance.memory.usedJSHeapSize )
-                    this._memSize = window.performance.memory.usedJSHeapSize;
-                this._stats.update();
+            frameStamp.setFrameNumber( previousFrameNumber + 1 );
+
+            var deltaS = Timer.instance().deltaS( this._startTick, Timer.instance().tick() );
+            frameStamp.setReferenceTime( deltaS );
+
+            // reference time
+            if ( sTime === Number.MAX_VALUE )
+                frameStamp.setSimulationTime( frameStamp.getReferenceTime() );
+            else
+                frameStamp.setSimulationTime( sTime );
+
+            var deltaFrameTime = frameStamp.getReferenceTime() - previousReferenceTime;
+            this.getViewerStats().setAttribute( previousFrameNumber, 'Frame rate', 1.0 / deltaFrameTime );
+        },
+
+        beginFrame: function () {
+            this._startFrameTick = Timer.instance().tick();
+        },
+
+        endFrame: function () {
+
+            var frameNumber = this.getFrameStamp().getFrameNumber();
+
+            if ( window.performance &&
+                window.performance.memory &&
+                window.performance.memory.usedJSHeapSize ) {
+                var mem = window.performance.memory.usedJSHeapSize;
+                this.getViewerStats().setAttribute( frameNumber, 'Heap size', mem );
             }
+
+            this.getViewerStats().setAttribute( frameNumber, 'Frame duration', Timer.instance().deltaS( this._startFrameTick, Timer.instance().tick() ) );
+
+            if ( this._canvasStats ) { // update ui stats
+                this.getCamera().getRenderer().getState().getTextureManager().updateStats( frameNumber );
+                this._canvasStats.update();
+            }
+        },
+
+        frame: function () {
+
+            this.beginFrame();
+
+            this.advance();
+
+            // update viewport if a resize occured
+            this.updateViewport();
+
+            // update inputs devices
+            this.updateEventProxy( this._eventProxy, this.getFrameStamp() );
+
+            this.updateTraversal();
+            this.renderingTraversal();
+
+            this.endFrame();
         },
 
         setDone: function ( bool ) {
@@ -521,7 +508,7 @@ define( [
             var self = this;
             var render = function () {
                 if ( !self.done() ) {
-                    self._requestID = window.requestAnimationFrame( render, self.canvas );
+                    self._requestID = window.requestAnimationFrame( render, self.getGraphicContext().canvas );
                     self.frame();
                 }
             };
@@ -541,11 +528,11 @@ define( [
             }
 
             this.setManipulator( manipulator );
-       },
+        },
 
 
         // updateViewport
-        updateViewport: function() {
+        updateViewport: function () {
 
             var gl = this.getGraphicContext();
             var canvas = gl.canvas;

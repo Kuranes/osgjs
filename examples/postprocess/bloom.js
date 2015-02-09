@@ -27,8 +27,8 @@ function getPostSceneBloom( sceneTexture, bloomTextureFactor ) {
             cachedScenes[ sceneFile ] = osg.Texture.createFromURL( sceneFile );
 
         currentSceneTexture = cachedScenes[ sceneFile ];
-        additiveFilter.getStateSet().setTextureAttributeAndMode( 0, currentSceneTexture );
-        brightFilter.getStateSet().setTextureAttributeAndMode( 0, currentSceneTexture );
+        additiveFilter.getStateSet().setTextureAttributeAndModes( 0, currentSceneTexture );
+        brightFilter.getStateSet().setTextureAttributeAndModes( 0, currentSceneTexture );
     };
 
     // create a downsized texture to render the bloom to
@@ -109,7 +109,7 @@ function getPostSceneBloom( sceneTexture, bloomTextureFactor ) {
         - Downsample the bright texture
         - Blur the bright texture to have a "glow" effect
         - Apply the blurred texture on the original scene texture
-        (the downsampling helps to reduce the cost of the blur) 
+        (the downsampling helps to reduce the cost of the blur)
     */
     var effect = {
 
@@ -124,10 +124,10 @@ function getPostSceneBloom( sceneTexture, bloomTextureFactor ) {
             composer.addPass( brightFilter, bloomTexture );
 
             // Blur the bright downsized sceneTexture
-            composer.addPass( new osgUtil.Composer.Filter.AverageVBlur( 10 ) );
-            composer.addPass( new osgUtil.Composer.Filter.AverageHBlur( 10 ) );
-            composer.addPass( new osgUtil.Composer.Filter.AverageVBlur( 10 ) );
-            composer.addPass( new osgUtil.Composer.Filter.AverageHBlur( 10 ), bloomTexture );
+            composer.addPass( new osgUtil.Composer.Filter.VBlur( 10 ) );
+            composer.addPass( new osgUtil.Composer.Filter.HBlur( 10 ) );
+            composer.addPass( new osgUtil.Composer.Filter.VBlur( 10 ) );
+            composer.addPass( new osgUtil.Composer.Filter.HBlur( 10 ), bloomTexture );
 
             // Add the original scene texture and the bloom texture and render into final texture
             composer.addPass( additiveFilter, finalTexture );

@@ -10,16 +10,10 @@ define( [
             this.lineWidth = lineWidth;
         }
     };
-    LineWidth.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInehrit( StateAttribute.prototype, {
+    LineWidth.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInherit( StateAttribute.prototype, {
         attributeType: 'LineWidth',
         cloneType: function () {
             return new LineWidth();
-        },
-        getType: function () {
-            return this.attributeType;
-        },
-        getTypeMember: function () {
-            return this.attributeType;
         },
         apply: function ( state ) {
             state.getGraphicContext().lineWidth( this.lineWidth );

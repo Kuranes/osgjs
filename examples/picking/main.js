@@ -83,7 +83,7 @@ function loadModel( data, viewer, node, unifs ) {
         node.addChild( child );
         viewer.getManipulator().computeHomePosition();
 
-        child.getOrCreateStateSet().setAttributeAndMode( getShader() );
+        child.getOrCreateStateSet().setAttributeAndModes( getShader() );
         child.getOrCreateStateSet().addUniform( unifs.center );
         child.getOrCreateStateSet().addUniform( unifs.radius2 );
         child.getOrCreateStateSet().addUniform( unifs.time );
@@ -105,7 +105,7 @@ function createScene( viewer, unifs ) {
     var root = new osg.Node();
 
     loadUrl( '../ssao/raceship.osgjs', viewer, root, unifs );
-    root.getOrCreateStateSet().setAttributeAndMode( new osg.CullFace( osg.CullFace.DISABLE ) );
+    root.getOrCreateStateSet().setAttributeAndModes( new osg.CullFace( osg.CullFace.DISABLE ) );
 
     var UpdateCallback = function( base ) {
         this.baseTime_ = ( new Date ).getTime();
@@ -125,7 +125,8 @@ function projectToScreen( cam, hit ) {
     osg.Matrix.preMult( mat, cam.getViewport() ? cam.getViewport().computeWindowMatrix() : osg.Matrix.create() );
     osg.Matrix.preMult( mat, cam.getProjectionMatrix() );
     osg.Matrix.preMult( mat, cam.getViewMatrix() );
-    osg.Matrix.preMult( mat, osg.computeLocalToWorld( hit.nodepath ) );
+    // Node 0 in nodepath is the Camera of the Viewer, so we take next child
+    osg.Matrix.preMult( mat, osg.computeLocalToWorld( hit.nodepath.slice( 1 ) ) );
 
     var pt = [ 0.0, 0.0, 0.0 ];
     osg.Matrix.transformVec3( mat, hit.point, pt );

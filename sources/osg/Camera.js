@@ -3,8 +3,11 @@ define( [
     'osg/Transform',
     'osg/CullSettings',
     'osg/Matrix',
+    'osg/Texture',
     'osg/TransformEnums'
-], function ( MACROUTILS, Transform, CullSettings, Matrix, TransformEnums ) {
+], function ( MACROUTILS, Transform, CullSettings, Matrix, Texture, TransformEnums ) {
+
+    'use strict';
 
     /**
      * Camera - is a subclass of Transform which represents encapsulates the settings of a Camera.
@@ -28,6 +31,10 @@ define( [
         this.setProjectionMatrix( Matrix.create() );
         this.renderOrder = Camera.NESTED_RENDER;
         this.renderOrderNum = 0;
+
+        this._view = undefined;
+        this._renderer = undefined;
+        this._attachments = {};
     };
 
     Camera.PRE_RENDER = 0;
@@ -39,9 +46,30 @@ define( [
     Camera.STENCIL_BUFFER_BIT = 0x00000400;
 
     /** @lends Camera.prototype */
-    Camera.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInehrit(
+    Camera.prototype = MACROUTILS.objectLibraryClass( MACROUTILS.objectInherit(
         CullSettings.prototype,
-        MACROUTILS.objectInehrit( Transform.prototype, {
+        MACROUTILS.objectInherit( Transform.prototype, {
+            // at which view this camera is attached
+            getView: function () {
+                return this._view;
+            },
+
+            setView: function ( view ) {
+                this._view = view;
+            },
+
+            getRenderer: function () {
+                return this._renderer;
+            },
+
+            setRenderer: function ( renderer ) {
+                this._renderer = renderer;
+            },
+
+
+            getAttachments: function () {
+                return this._attachments;
+            },
 
             setGraphicContext: function ( gc ) {
                 this._graphicContext = gc;
@@ -72,7 +100,7 @@ define( [
 
             setViewport: function ( vp ) {
                 this.viewport = vp;
-                this.getOrCreateStateSet().setAttributeAndMode( vp );
+                this.getOrCreateStateSet().setAttributeAndModes( vp );
             },
             getViewport: function () {
                 return this.viewport;
@@ -93,6 +121,17 @@ define( [
                 zNear, zFar ) {
                 Matrix.makeOrtho( left, right, bottom, top, zNear, zFar, this.getProjectionMatrix() );
             },
+            setNearFar: function ( zNear, zFar ) {
+                this._near = zNear;
+                this._far = zFar;
+            },
+            getNear: function () {
+                return this._near;
+            },
+            getFar: function () {
+                return this._far;
+            },
+
 
             getViewMatrix: function () {
                 return this.modelviewMatrix;
@@ -108,19 +147,28 @@ define( [
                 this.renderOrderNum = orderNum;
             },
 
-            attachTexture: function ( bufferComponent, texture, level ) {
+            detachAll: function () {
+                this._attachments = {};
+
+                if ( this.frameBufferObject )
+                    this.frameBufferObject.dirty();
+            },
+
+            attachTexture: function ( bufferComponent, texture, textureTarget ) {
                 if ( this.frameBufferObject ) {
                     this.frameBufferObject.dirty();
                 }
-                if ( level === undefined ) {
-                    level = 0;
+
+                // because before the argument was level and the spec says
+                // it must always be 0 ! is valid for 0 or undefined
+                if ( !textureTarget ) {
+                    textureTarget = Texture.TEXTURE_2D;
                 }
-                if ( this.attachments === undefined ) {
-                    this.attachments = {};
-                }
-                this.attachments[ bufferComponent ] = {
+
+                this._attachments[ bufferComponent ] = {
+                    'attachment': bufferComponent,
                     'texture': texture,
-                    'level': level
+                    'textureTarget': textureTarget
                 };
             },
 
@@ -128,11 +176,9 @@ define( [
                 if ( this.frameBufferObject ) {
                     this.frameBufferObject.dirty();
                 }
-                if ( this.attachments === undefined ) {
-                    this.attachments = {};
-                }
-                this.attachments[ bufferComponent ] = {
-                    'format': internalFormat
+                this._attachments[ bufferComponent ] = {
+                    'format': internalFormat,
+                    'attachment': bufferComponent
                 };
             },
 
@@ -140,18 +186,19 @@ define( [
                 if ( this.referenceFrame === TransformEnums.RELATIVE_RF ) {
                     Matrix.preMult( matrix, this.modelviewMatrix );
                 } else { // absolute
-                    matrix = this.modelviewMatrix;
+                    Matrix.copy( this.modelviewMatrix, matrix );
                 }
                 return true;
             },
 
-            computeWorldToLocalMatrix: ( function ( matrix /*, nodeVisitor */ ) {
-                var inverse = Matrix.create();
-                return function () {
+            computeWorldToLocalMatrix: ( function () {
+                var minverse = Matrix.create();
+                return function ( matrix /*, nodeVisitor */ ) {
+                    Matrix.inverse( this.modelviewMatrix, minverse );
                     if ( this.referenceFrame === TransformEnums.RELATIVE_RF ) {
-                        Matrix.postMult( Matrix.inverse( this.modelviewMatrix, inverse ), matrix );
+                        Matrix.postMult( minverse, matrix );
                     } else {
-                        Matrix.inverse( this.modelviewMatrix, matrix );
+                        Matrix.copy( minverse, matrix );
                     }
                     return true;
                 };
